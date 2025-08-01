@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../lib/i18n/LanguageContext';
-import { BarChart3, Target, Activity, DollarSign, Calendar, User, Building2, FileType, CheckCircle, AlertCircle, Info, Loader } from 'lucide-react';
+import { BarChart3, Target, Activity, DollarSign, Calendar, User, Building2, FileType, CheckCircle, AlertCircle, Info, Loader, FileSpreadsheet, Download } from 'lucide-react';
 import { StrategicObjective } from '../types/organization';
 import { PlanType } from '../types/plan';
-import { formatCurrency, processDataForExport } from '../lib/utils/export';
+import { formatCurrency, processDataForExport, exportToExcel, exportToPDF } from '../lib/utils/export';
 import { initiatives, performanceMeasures, mainActivities, auth } from '../lib/api';
 
 interface PlanReviewTableProps {
@@ -362,6 +362,51 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
   };
 
   const planTotals = calculatePlanTotals();
+
+  // Export functions
+  const handleExportExcel = (language: string = 'en') => {
+    if (!processedObjectives || processedObjectives.length === 0) {
+      console.warn('No data available for export');
+      return;
+    }
+    
+    // Format data for export using the same function as before
+    const dataFormatted = processDataForExport(processedObjectives, language);
+    exportToExcel(
+      dataFormatted,
+      `moh-plan-${new Date().toISOString().slice(0, 10)}`,
+      language,
+      {
+        organization: organizationName,
+        planner: plannerName,
+        fromDate: fromDate,
+        toDate: toDate,
+        planType: planType
+      }
+    );
+  };
+
+  const handleExportPDF = (language: string = 'en') => {
+    if (!processedObjectives || processedObjectives.length === 0) {
+      console.warn('No data available for export');
+      return;
+    }
+    
+    // Format data for export using the same function as before
+    const dataFormatted = processDataForExport(processedObjectives, language);
+    exportToPDF(
+      dataFormatted,
+      `moh-plan-${new Date().toISOString().slice(0, 10)}`,
+      language,
+      {
+        organization: organizationName,
+        planner: plannerName,
+        fromDate: fromDate,
+        toDate: toDate,
+        planType: planType
+      }
+    );
+  };
 
   if (isLoading) {
     return (
@@ -773,6 +818,49 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Export Buttons - Only show if not in preview mode and not view-only */}
+      {!isPreviewMode && !isViewOnly && processedObjectives && processedObjectives.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Export Plan</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <button
+              onClick={() => handleExportExcel('en')}
+              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            >
+              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
+              Export Excel (EN)
+            </button>
+            
+            <button
+              onClick={() => handleExportExcel('am')}
+              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            >
+              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
+              Export Excel (አማርኛ)
+            </button>
+            
+            <button
+              onClick={() => handleExportPDF('en')}
+              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <Download className="h-5 w-5 mr-2 text-blue-600" />
+              Export PDF (EN)
+            </button>
+            
+            <button
+              onClick={() => handleExportPDF('am')}
+              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <Download className="h-5 w-5 mr-2 text-blue-600" />
+              Export PDF (አማርኛ)
+            </button>
+          </div>
+          <p className="mt-3 text-sm text-gray-500">
+            Export your complete plan data in Excel or PDF format. Choose English or Amharic language for the export.
+          </p>
+        </div>
+      )}
 
       {/* Submit Button (only show if not in preview mode and not view-only) */}
       {!isPreviewMode && !isViewOnly && (
