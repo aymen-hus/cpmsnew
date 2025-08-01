@@ -4,7 +4,7 @@ import { Building2, LogOut, LayoutDashboard, FileSpreadsheet, Activity, Clipboar
 import { useLanguage } from '../lib/i18n/LanguageContext';
 import { auth } from '../lib/api';
 import LanguageSwitch from './LanguageSwitch';
-import { AuthState, isAdmin, isPlanner, isEvaluator, isTeamDeskPlanner } from '../types/user';
+import { AuthState, isAdmin, isPlanner, isEvaluator } from '../types/user';
 
 const DashboardLayout: React.FC = () => {
   const navigate = useNavigate();
@@ -73,7 +73,7 @@ const DashboardLayout: React.FC = () => {
             <div className="flex items-center">
               <Link to="/dashboard" className="flex items-center transition-transform hover:scale-105">
                 <img 
-                  src="/assets/moh-logo.png"
+                  src="/assets/moh.png"
                   alt="Ministry of Health"
                   className="h-8 w-8 rounded-full object-cover mr-2"
                 />
@@ -95,7 +95,7 @@ const DashboardLayout: React.FC = () => {
                 </Link>
                 
                 {/* Only show planning link to planners */}
-                {(isPlanner(authState.userOrganizations) || isTeamDeskPlanner(authState.userOrganizations)) && (
+                {isPlanner(authState.userOrganizations) && (
                   <Link
                     to="/planning"
                     className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
@@ -105,7 +105,7 @@ const DashboardLayout: React.FC = () => {
                     }`}
                   >
                     <FileSpreadsheet className="h-5 w-5 mr-2" />
-                    {isTeamDeskPlanner(authState.userOrganizations) ? 'Team/Desk Planning' : t('nav.planning')}
+                    {t('nav.planning')}
                   </Link>
                 )}
                 
