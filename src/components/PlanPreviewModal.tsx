@@ -72,9 +72,35 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
       const enrichedObjectives = await Promise.all(
         objectivesList.map(async (objective) => {
           try {
-            // Fetch fresh initiatives for this objective
+            // Fetch fresh initiatives for this objective - ensure we get ALL initiatives
+            console.log(`Fetching initiatives for objective ${objective.id} (${objective.title})`);
             const initiativesResponse = await initiatives.getByObjective(objective.id.toString());
-            const objectiveInitiatives = initiativesResponse?.data || [];
+            let objectiveInitiatives = initiativesResponse?.data || [];
+            
+            console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
+            
+            // Also check if the objective has programs and fetch initiatives for those programs
+            if (objective.programs && Array.isArray(objective.programs)) {
+              for (const program of objective.programs) {
+                try {
+                  console.log(`Fetching initiatives for program ${program.id} under objective ${objective.id}`);
+                  const programInitiativesResponse = await initiatives.getByProgram(program.id.toString());
+                  const programInitiatives = programInitiativesResponse?.data || [];
+                  console.log(`Found ${programInitiatives.length} initiatives for program ${program.id}`);
+                  
+                  // Add program initiatives to the list, avoiding duplicates
+                  programInitiatives.forEach(programInitiative => {
+                    if (!objectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
+                      objectiveInitiatives.push(programInitiative);
+                    }
+                  });
+                } catch (programError) {
+                  console.error(`Error fetching initiatives for program ${program.id}:`, programError);
+                }
+              }
+            }
+            
+            console.log(`Total initiatives after program check: ${objectiveInitiatives.length}`);
 
             // Filter initiatives based on user organization
             const filteredInitiatives = objectiveInitiatives.filter(initiative => 
@@ -82,14 +108,19 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
               !initiative.organization || 
               initiative.organization === userOrgId
             );
+            
+            console.log(`Filtered initiatives for user org ${userOrgId}: ${filteredInitiatives.length}`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = await Promise.all(
               filteredInitiatives.map(async (initiative) => {
                 try {
+                  console.log(`Fetching data for initiative ${initiative.id} (${initiative.name})`);
+                  
                   // Fetch performance measures
                   const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
                   const allMeasures = measuresResponse?.data || [];
+                  console.log(`Found ${allMeasures.length} measures for initiative ${initiative.id}`);
                   
                   // Filter measures by organization
                   const filteredMeasures = allMeasures.filter(measure =>
@@ -99,11 +130,14 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
                   // Fetch main activities
                   const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
                   const allActivities = activitiesResponse?.data || [];
+                  console.log(`Found ${allActivities.length} activities for initiative ${initiative.id}`);
                   
                   // Filter activities by organization
                   const filteredActivities = allActivities.filter(activity =>
                     !activity.organization || activity.organization === userOrgId
                   );
+
+                  console.log(`Initiative ${initiative.id} final data: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
                   return {
                     ...initiative,
@@ -126,6 +160,8 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
               ? objective.planner_weight
               : objective.weight;
 
+            console.log(`Objective ${objective.id} final result: ${enrichedInitiatives.length} initiatives`);
+
             return {
               ...objective,
               effective_weight: effectiveWeight,
@@ -142,7 +178,13 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
         })
       );
 
-      console.log('Successfully enriched objectives with complete data');
+      console.log('Successfully enriched objectives with complete data:', 
+        enrichedObjectives.map(obj => ({
+          id: obj.id,
+          title: obj.title,
+          initiativesCount: obj.initiatives?.length || 0
+        }))
+      );
       return enrichedObjectives;
     } catch (error) {
       console.error('Error in fetchCompleteObjectiveData:', error);
