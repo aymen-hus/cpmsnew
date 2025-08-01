@@ -354,14 +354,14 @@ const validateActivitiesMutation = useMutation({
         budget_calculation_type: 'WITH_TOOL' as BudgetCalculationType,
         activity_type: activityType,
         estimated_cost_with_tool: calculatedBudget,
-        partners_list: costs.partners_list || [],
         totalBudget: calculatedBudget,     // Add for redundancy
         estimated_cost: calculatedBudget,   // Add for redundancy
         estimated_cost_without_tool: 0,
-        government_treasury: 0,
-        sdg_funding: 0,
-        partners_funding: 0,
-        other_funding: 0,
+        government_treasury: selectedActivity.budget?.government_treasury || 0,
+        sdg_funding: selectedActivity.budget?.sdg_funding || 0,
+        partners_funding: selectedActivity.budget?.partners_funding || 0,
+        other_funding: selectedActivity.budget?.other_funding || 0,
+        partners_list: selectedActivity.budget?.partners_list || costs.partners_list || [],
         organization: userOrgId
       };
 
@@ -396,10 +396,17 @@ const validateActivitiesMutation = useMutation({
           estimated_cost: calculatedBudget,        // Important field
           estimated_cost_with_tool: calculatedBudget, // Important field
           totalBudget: calculatedBudget,           // Another way to access the value
-          total_funding: 0,                        // Set to 0 initially
-          funding_gap: calculatedBudget,           // Initially equals the budget
+          total_funding: (selectedActivity.budget?.government_treasury || 0) + 
+                        (selectedActivity.budget?.sdg_funding || 0) + 
+                        (selectedActivity.budget?.partners_funding || 0) + 
+                        (selectedActivity.budget?.other_funding || 0),
+          funding_gap: calculatedBudget - ((selectedActivity.budget?.government_treasury || 0) + 
+                                          (selectedActivity.budget?.sdg_funding || 0) + 
+                                          (selectedActivity.budget?.partners_funding || 0) + 
+                                          (selectedActivity.budget?.other_funding || 0)),
           id: selectedActivity.budget?.id,         // Preserve existing budget ID if it exists
-          budget_calculation_type: 'WITH_TOOL'     // Ensure this is set
+          budget_calculation_type: 'WITH_TOOL',    // Ensure this is set
+          partners_list: selectedActivity.budget?.partners_list || costs.partners_list || []
         }
       };
       setSelectedActivity(tempActivity);
