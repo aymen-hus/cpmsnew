@@ -232,7 +232,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     main_activities: filteredActivities
                   };
                 } catch (error) {
-                  console.error(`PlanReviewTable: Error fetching data for initiative ${initiative.id}:`, error);
+                  console.warn(`Error processing initiative ${initiative.id}:`, error);
                   return {
                     ...initiative,
                     performance_measures: [],
@@ -260,7 +260,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
               initiatives: enrichedInitiatives
             };
           } catch (error) {
-            console.error(`PlanReviewTable: Error processing objective ${objective.id}:`, error);
+            console.warn(`Error processing objective ${objective.id}:`, error);
             return {
               ...objective,
               effective_weight: objective.weight,
@@ -877,48 +877,6 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
       </div>
 
       {/* Export Buttons - Only show if not in preview mode and not view-only */}
-      {!isPreviewMode && !isViewOnly && processedObjectives && processedObjectives.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Export Plan</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <button
-              onClick={() => handleExportExcel('en')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-            >
-              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
-              Export Excel (EN)
-            </button>
-            
-            <button
-              onClick={() => handleExportExcel('am')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-            >
-              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
-              Export Excel (አማርኛ)
-            </button>
-            
-            <button
-              onClick={() => handleExportPDF('en')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <Download className="h-5 w-5 mr-2 text-blue-600" />
-              Export PDF (EN)
-            </button>
-            
-            <button
-              onClick={() => handleExportPDF('am')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <Download className="h-5 w-5 mr-2 text-blue-600" />
-              Export PDF (አማርኛ)
-            </button>
-          </div>
-          <p className="mt-3 text-sm text-gray-500">
-            Export your complete plan data in Excel or PDF format. Choose English or Amharic language for the export.
-          </p>
-        </div>
-      )}
-
       {!isPreviewMode && !isViewOnly && processedObjectives && processedObjectives.length > 0 && (
         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Export Plan</h3>
