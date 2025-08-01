@@ -72,38 +72,55 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
       const enrichedObjectives = await Promise.all(
         objectivesList.map(async (objective) => {
           try {
-            // Fetch fresh initiatives for this objective
-            const initiativesResponse = await initiatives.getByObjective(objective.id.toString());
+            // Fetch fresh initiatives for this objective with cache busting
+            const timestamp = new Date().getTime();
+            const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${objective.id}&_=${timestamp}`);
             const objectiveInitiatives = initiativesResponse?.data || [];
+            
+            console.log(`Fetched ${objectiveInitiatives.length} initiatives for objective ${objective.id} (${objective.title})`);
 
-            // Filter initiatives based on user organization
-            const filteredInitiatives = objectiveInitiatives.filter(initiative => 
-              initiative.is_default || 
-              !initiative.organization || 
-              initiative.organization === userOrgId
-            );
+            // Filter initiatives based on user organization - include all that belong to user or are default
+            const filteredInitiatives = objectiveInitiatives.filter(initiative => {
+              const shouldInclude = initiative.is_default || 
+                                   !initiative.organization || 
+                                   initiative.organization === userOrgId;
+              console.log(`Initiative ${initiative.id} (${initiative.name}): is_default=${initiative.is_default}, organization=${initiative.organization}, userOrgId=${userOrgId}, shouldInclude=${shouldInclude}`);
+              return shouldInclude;
+            });
+            
+            console.log(`Filtered to ${filteredInitiatives.length} initiatives for objective ${objective.id}`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = await Promise.all(
               filteredInitiatives.map(async (initiative) => {
                 try {
-                  // Fetch performance measures
-                  const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+                  console.log(`Fetching data for initiative ${initiative.id} (${initiative.name})`);
+                  
+                  // Fetch performance measures with cache busting
+                  const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}&_=${timestamp}`);
                   const allMeasures = measuresResponse?.data || [];
+                  console.log(`Fetched ${allMeasures.length} performance measures for initiative ${initiative.id}`);
                   
                   // Filter measures by organization
-                  const filteredMeasures = allMeasures.filter(measure =>
-                    !measure.organization || measure.organization === userOrgId
-                  );
+                  const filteredMeasures = allMeasures.filter(measure => {
+                    const shouldInclude = !measure.organization || measure.organization === userOrgId;
+                    console.log(`Measure ${measure.id} (${measure.name}): organization=${measure.organization}, userOrgId=${userOrgId}, shouldInclude=${shouldInclude}`);
+                    return shouldInclude;
+                  });
+                  console.log(`Filtered to ${filteredMeasures.length} performance measures for initiative ${initiative.id}`);
 
-                  // Fetch main activities
-                  const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+                  // Fetch main activities with cache busting
+                  const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}&_=${timestamp}`);
                   const allActivities = activitiesResponse?.data || [];
+                  console.log(`Fetched ${allActivities.length} main activities for initiative ${initiative.id}`);
                   
                   // Filter activities by organization
-                  const filteredActivities = allActivities.filter(activity =>
-                    !activity.organization || activity.organization === userOrgId
-                  );
+                  const filteredActivities = allActivities.filter(activity => {
+                    const shouldInclude = !activity.organization || activity.organization === userOrgId;
+                    console.log(`Activity ${activity.id} (${activity.name}): organization=${activity.organization}, userOrgId=${userOrgId}, shouldInclude=${shouldInclude}`);
+                    return shouldInclude;
+                  });
+                  console.log(`Filtered to ${filteredActivities.length} main activities for initiative ${initiative.id}`);
 
                   return {
                     ...initiative,
@@ -120,6 +137,8 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
                 }
               })
             );
+            
+            console.log(`Final enriched initiatives for objective ${objective.id}:`, enrichedInitiatives.length);
 
             // Set effective weight correctly
             const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
@@ -142,7 +161,13 @@ const PlanPreviewModal: React.FC<PlanPreviewModalProps> = ({
         })
       );
 
-      console.log('Successfully enriched objectives with complete data');
+      console.log('Successfully enriched objectives with complete data:', enrichedObjectives.map(obj => ({
+        id: obj.id,
+        title: obj.title,
+        initiativesCount: obj.initiatives?.length || 0,
+        totalMeasures: obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0,
+        totalActivities: obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0
+      })));
       return enrichedObjectives;
     } catch (error) {
       console.error('Error in fetchCompleteObjectiveData:', error);
