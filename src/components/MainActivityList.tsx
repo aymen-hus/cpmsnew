@@ -857,7 +857,7 @@ const validateActivitiesMutation = useMutation({
               <TrainingCostingTool
                 onCalculate={handleToolCalculation}
                 onCancel={handleCancelCosting}
-                initialData={selectedActivity.budget?.training_details}
+                initialData={selectedActivity?.budget?.training_details || null}
               />
             )}
             
@@ -866,7 +866,7 @@ const validateActivitiesMutation = useMutation({
                 activityType={activityType as 'Meeting' | 'Workshop'}
                 onCalculate={handleToolCalculation}
                 onCancel={handleCancelCosting}
-                initialData={selectedActivity.budget?.meeting_workshop_details}
+                initialData={selectedActivity?.budget?.meeting_workshop_details || null}
               />
             )}
             
@@ -874,7 +874,7 @@ const validateActivitiesMutation = useMutation({
               <PrintingCostingTool
                 onCalculate={handleToolCalculation}
                 onCancel={handleCancelCosting}
-                initialData={selectedActivity.budget?.printing_details}
+                initialData={selectedActivity?.budget?.printing_details || null}
               />
             )}
             
@@ -882,7 +882,7 @@ const validateActivitiesMutation = useMutation({
               <ProcurementCostingTool
                 onCalculate={handleToolCalculation}
                 onCancel={handleCancelCosting}
-                initialData={selectedActivity.budget?.procurement_details}
+                initialData={selectedActivity?.budget?.procurement_details || null}
               />
             )}
             
@@ -890,7 +890,7 @@ const validateActivitiesMutation = useMutation({
               <SupervisionCostingTool
                 onCalculate={handleToolCalculation}
                 onCancel={handleCancelCosting}
-                initialData={selectedActivity.budget?.supervision_details}
+                initialData={selectedActivity?.budget?.supervision_details || null}
               />
             )}
           </div>
