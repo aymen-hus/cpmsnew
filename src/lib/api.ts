@@ -34,76 +34,44 @@ api.interceptors.response.use(
       // Clear cookies and redirect to login
       Cookies.remove('sessionid', { path: '/' });
       Cookies.remove('csrftoken', { path: '/' });
-      window.location.href = '/login';
+      
+      // Redirect after short delay to ensure cookies are cleared
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 100);
     }
     return Promise.reject(error);
   }
 );
 
-// Function to ensure CSRF token is set before making requests
+// Enhanced CSRF token handling
 const ensureCsrfToken = async () => {
   try {
-    await csrf();
-    return true;
+    let token = Cookies.get('csrftoken');
+    if (token) return token;
+    
+    // Try multiple endpoints to get CSRF token
+    await Promise.allSettled([
+      axios.get('/api/auth/csrf/', { withCredentials: true }),
+      axios.get('/api/auth/check/', { withCredentials: true })
+    ]);
+    
+    token = Cookies.get('csrftoken');
+    if (!token) throw new Error('CSRF token not found after refresh');
+    
+    return token;
   } catch (error) {
     console.error('Failed to ensure CSRF token:', error);
-    return false;
+    throw error;
   }
 };
 
 // Dedicated function to get a CSRF token
 export const csrf = async () => {
-  try {
-    let token = Cookies.get('csrftoken');
-    
-    if (!token) {
-      console.log('No CSRF token found, fetching a new one...');
-      
-      // Try the dedicated CSRF endpoint with cache prevention
-      const timestamp = new Date().getTime();
-      const csrfResponse = await axios.get(`/api/auth/csrf/?_=${timestamp}`, {
-        withCredentials: true,
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      token = Cookies.get('csrftoken');
-      
-      // If that doesn't work, try the auth/check/ endpoint
-      if (!token) {
-        console.log('No token from CSRF endpoint, trying auth/check/...');
-        await axios.get(`/api/auth/check/?_=${timestamp}`, {
-          withCredentials: true,
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-          }
-        });
-        
-        token = Cookies.get('csrftoken');
-      }
-      
-      // If we got a token from headers, set it as a cookie
-      if (!token && csrfResponse?.headers) {
-        const headerToken = csrfResponse.headers['x-csrftoken'] || 
-                         csrfResponse.headers['X-CSRFToken'];
-        if (headerToken) {
-          token = headerToken;
-          Cookies.set('csrftoken', token, { path: '/' });
-        }
-      }
-    }
-    
-    return token;
-  } catch (error) {
-    console.error('Failed to get CSRF token:', error);
-    throw error;
-  }
+  return ensureCsrfToken();
 };
 
-// Authentication service
+// Authentication service with enhanced session handling
 export const auth = {
   login: async (username: string, password: string) => {
     try {
@@ -123,14 +91,10 @@ export const auth = {
       } catch (err) {
         console.warn("Failed to refresh CSRF token before logout:", err);
       }
-      console.log('Attempting to logout user...');
       
-      // Add timestamp to prevent caching
-      const timestamp = new Date().getTime();
       const csrfToken = Cookies.get('csrftoken');
       
       try {
-        // Make a direct axios call instead of using the api instance
         await axios.post('/api/auth/logout/', {}, {
           headers: {
             'X-CSRFToken': csrfToken || '',
@@ -141,19 +105,15 @@ export const auth = {
           },
           withCredentials: true
         });
-        console.log('Logout request successful');
       } catch (err) {
         console.warn("Logout request failed but proceeding anyway:", err);
       }
-      
-      console.log('Clearing cookies...');
       
       // Always remove cookies regardless of response
       Cookies.remove('sessionid', { path: '/' });
       Cookies.remove('csrftoken', { path: '/' });
       
-      // Force reload to the login page after a brief timeout to ensure cookies are cleared
-      console.log('Redirecting to login page');
+      // Force reload to the login page after a brief timeout
       setTimeout(() => {
         window.location.href = '/login';
       }, 100);
@@ -161,23 +121,15 @@ export const auth = {
       return { success: true };
     } catch (error: any) {
       console.error('Logout error:', error);
-      
-      // Even if the API call fails, still clear cookies and redirect
-      console.log('Logout failed but still clearing cookies');
       Cookies.remove('sessionid', { path: '/' });
       Cookies.remove('csrftoken', { path: '/' });
-      
-      // Force reload to the login page after a brief timeout
-      console.log('Redirecting to login page');
       setTimeout(() => {
         window.location.href = '/login';
       }, 100);
-      
       return { success: false, error: error.message };
     }
   },
   
-  // New method for updating user profile
   updateProfile: async (data: { first_name?: string; last_name?: string; email?: string }) => {
     try {
       await ensureCsrfToken();
@@ -189,7 +141,6 @@ export const auth = {
     }
   },
   
-  // New method for changing password
   changePassword: async (data: { current_password: string; new_password: string }) => {
     try {
       await ensureCsrfToken();
@@ -211,7 +162,7 @@ export const auth = {
     }
   },
   
-  getCurrentUser: async (): Promise<AuthState> => {
+  getCurrentUser: async (retry = true): Promise<AuthState> => {
     try {
       const response = await api.get('/auth/check/');
       return {
@@ -219,8 +170,19 @@ export const auth = {
         user: response.data.user,
         userOrganizations: response.data.userOrganizations || []
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Get current user error:', error);
+      
+      // Retry once if we get a 401 error
+      if (error.response?.status === 401 && retry) {
+        try {
+          await ensureCsrfToken();
+          return auth.getCurrentUser(false);
+        } catch (refreshError) {
+          console.error('CSRF refresh failed:', refreshError);
+        }
+      }
+      
       return { isAuthenticated: false, user: null, userOrganizations: [] };
     }
   },
@@ -229,11 +191,34 @@ export const auth = {
     return !!Cookies.get('sessionid');
   },
   
-  // New method specifically for getting a CSRF token
   csrf: async () => {
     return csrf();
   }
 };
+
+// Session keep-alive function
+const SESSION_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
+let sessionRefreshTimer: NodeJS.Timeout | null = null;
+
+export const startSessionRefresh = () => {
+  if (sessionRefreshTimer) clearInterval(sessionRefreshTimer);
+  
+  sessionRefreshTimer = setInterval(async () => {
+    try {
+      await auth.getCurrentUser();
+    } catch (error) {
+      console.log('Session refresh failed', error);
+    }
+  }, SESSION_REFRESH_INTERVAL);
+};
+
+export const stopSessionRefresh = () => {
+  if (sessionRefreshTimer) {
+    clearInterval(sessionRefreshTimer);
+    sessionRefreshTimer = null;
+  }
+};
+
 // Initiative Feed API
 export const initiativeFeeds = {
   getAll: async () => {
@@ -300,32 +285,13 @@ export const initiativeFeeds = {
 // Locations API
 export const locations = {
   getAll: async () => {
-    console.log('Fetching all locations from API...');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const url = `/locations/?_=${timestamp}`;
-      console.log(`Making request to: ${api.defaults.baseURL}${url}`);
-      const response = await api.get(`/locations/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      
-      if (!response || !response.data) {
-        console.warn('Empty response received from locations API');
-        // Return empty array instead of throwing
-        return { data: [] };
-      }
-      
-      console.log('Fetched locations data count:', response.data?.length || 0);
+      const response = await api.get(`/locations/?_=${timestamp}`);
       return response;
     } catch (error) {
-      console.error('Failed to fetch locations:', error, error.response?.data || 'No response data');
-      console.error('API URL used:', api.defaults.baseURL);
-      throw error;
+      console.error('Failed to fetch locations:', error);
+      return { data: [] };
     }
   },
 
@@ -343,29 +309,14 @@ export const locations = {
 // Land Transports API
 export const landTransports = {
   getAll: async () => {
-    console.log('Fetching all land transports from API...');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      console.log(`Making request to: ${api.defaults.baseURL}/land-transports/`);
       const response = await api.get('/land-transports/', {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
       });
-      console.log('Fetched land transports data count:', response.data?.length || 0);
-      if (!response || !response.data) {
-        console.warn('Empty response received from land-transports API');
-        return { data: [] };
-      }
-      
-      console.log('Fetched land transports data count:', response.data?.length || 0);
-      return response; 
+      return response;
     } catch (error) {
-      console.error('Failed to fetch land transports:', error, error.response?.data || 'No response data');
-      console.error('API URL used:', api.defaults.baseURL);
-      // Return empty array instead of throwing
+      console.error('Failed to fetch land transports:', error);
       return { data: [] };
     }
   },
@@ -384,29 +335,14 @@ export const landTransports = {
 // Air Transports API
 export const airTransports = {
   getAll: async () => {
-    console.log('Fetching all air transports from API...');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      console.log(`Making request to: ${api.defaults.baseURL}/air-transports/`);
       const response = await api.get('/air-transports/', {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
       });
-      
-      if (!response || !response.data) {
-        console.warn('Empty response received from air-transports API');
-        return { data: [] };
-      }
-      
-      console.log('Fetched air transports data count:', response.data?.length || 0);
       return response;
     } catch (error) {
-      console.error('Failed to fetch air transports:', error, error.response?.data || 'No response data');
-      console.error('API URL used:', api.defaults.baseURL);
-      // Return empty array instead of throwing
+      console.error('Failed to fetch air transports:', error);
       return { data: [] };
     }
   },
@@ -425,17 +361,9 @@ export const airTransports = {
 // Per Diems API
 export const perDiems = {
   getAll: async () => {
-    console.log('Fetching all per diems from API...');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/per-diems/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched per-diems data count:', response.data?.length || 0);
+      const response = await api.get(`/per-diems/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch per diems:', error);
@@ -457,21 +385,12 @@ export const perDiems = {
 // Accommodations API
 export const accommodations = {
   getAll: async () => {
-    console.log('Fetching all accommodations from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/accommodations/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched accommodations data count:', response.data?.length || 0);
+      const response = await api.get(`/accommodations/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch accommodations:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -479,7 +398,7 @@ export const accommodations = {
   getById: async (id: string) => {
     try {
       const response = await api.get(`/accommodations/${id}/`);
-      return response
+      return response;
     } catch (error) {
       console.error(`Failed to fetch accommodation ${id}:`, error);
       throw error;
@@ -490,21 +409,12 @@ export const accommodations = {
 // Participant Costs API
 export const participantCosts = {
   getAll: async () => {
-    console.log('Fetching all participant costs from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/participant-costs/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched participant costs data count:', response.data?.length || 0);
+      const response = await api.get(`/participant-costs/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch participant costs:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -523,21 +433,12 @@ export const participantCosts = {
 // Session Costs API
 export const sessionCosts = {
   getAll: async () => {
-    console.log('Fetching all session costs from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/session-costs/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched session costs data count:', response.data?.length || 0);
+      const response = await api.get(`/session-costs/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch session costs:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -556,21 +457,12 @@ export const sessionCosts = {
 // Printing Costs API
 export const printingCosts = {
   getAll: async () => {
-    console.log('Fetching all printing costs from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/printing-costs/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched printing costs data count:', response.data?.length || 0);
+      const response = await api.get(`/printing-costs/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch printing costs:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -589,21 +481,12 @@ export const printingCosts = {
 // Supervisor Costs API
 export const supervisorCosts = {
   getAll: async () => {
-    console.log('Fetching all supervisor costs from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/supervisor-costs/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched supervisor costs data count:', response.data?.length || 0);
+      const response = await api.get(`/supervisor-costs/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch supervisor costs:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -622,21 +505,12 @@ export const supervisorCosts = {
 // Procurement Items API
 export const procurementItems = {
   getAll: async () => {
-    console.log('Fetching all procurement items from API');
     try {
-      // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const response = await api.get(`/procurement-items/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      console.log('Fetched procurement items data count:', response.data?.length || 0);
+      const response = await api.get(`/procurement-items/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to fetch procurement items:', error);
-      // Return empty data instead of throwing
       return { data: [] };
     }
   },
@@ -661,16 +535,13 @@ export const procurementItems = {
     }
   }
 };
+
 // Organizations service
 export const organizations = {
   async getAll() {
     try {
       const timestamp = new Date().getTime();
-      const response = await api.get(`/organizations/?_=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate'
-        }
-      });
+      const response = await api.get(`/organizations/?_=${timestamp}`);
       return response.data;
     } catch (error) {
       console.error('Failed to get organizations:', error);
@@ -722,19 +593,11 @@ export const organizations = {
     try {
       const allOrganizations = await this.getAll();
       
-      if (!allOrganizations) {
-        console.error('Empty organizations response');
-        return [];
-      }
-      
       if (!Array.isArray(allOrganizations)) {
-        console.error('Organizations response is not an array:', typeof allOrganizations);
         return [];
       }
       
-      // Filter organizations by type
       return allOrganizations.filter((org: Organization) => {
-        if (!org || !org.type) return false;
         return ['EXECUTIVE', 'TEAM_LEAD', 'DESK'].includes(org.type);
       });
     } catch (error) {
@@ -743,29 +606,6 @@ export const organizations = {
     }
   }
 };
-
-// Initiative Feeds service
-// export const initiativeFeeds = {
-//   async getAll() {
-//     try {
-//       const response = await api.get('/initiative-feeds/');
-//       return response;
-//     } catch (error) {
-//       console.error('Failed to get initiative feeds:', error);
-//       throw error;
-//     }
-//   },
-  
-//   async getById(id: string) {
-//     try {
-//       const response = await api.get(`/initiative-feeds/${id}/`);
-//       return response;
-//     } catch (error) {
-//       console.error(`Failed to get initiative feed ${id}:`, error);
-//       throw error;
-//     }
-//   }
-// };
 
 // Strategic objectives service
 export const objectives = {
@@ -894,265 +734,120 @@ export const programs = {
   }
 };
 
-// Strategic initiatives service
+// Strategic Initiatives API
 export const initiatives = {
-  async getAll() {
+  getAll: async () => {
     try {
       const response = await api.get('/strategic-initiatives/');
       return response;
     } catch (error) {
-      console.error('Failed to get initiatives:', error);
+      console.error('Failed to fetch initiatives:', error);
       throw error;
     }
   },
   
-  async getByObjective(objectiveId: string) {
+  getById: async (id: string) => {
     try {
-      const response = await api.get(`/strategic-initiatives/?objective=${objectiveId}`);
+      const response = await api.get(`/strategic-initiatives/${id}/`);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to fetch initiative ${id}:`, error);
+      throw error;
+    }
+  },
+  
+  getByObjective: async (objectiveId: string) => {
+    try {
+      const timestamp = new Date().getTime();
+      const response = await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`);
       return response;
     } catch (error) {
-      console.error(`Failed to get initiatives for objective ${objectiveId}:`, error);
+      console.error(`Failed to fetch initiatives for objective ${objectiveId}:`, error);
       throw error;
     }
   },
   
-  async getByProgram(programId: string) {
+  getByProgram: async (programId: string) => {
     try {
       const response = await api.get(`/strategic-initiatives/?program=${programId}`);
       return response;
     } catch (error) {
-      console.error(`Failed to get initiatives for program ${programId}:`, error);
+      console.error(`Failed to fetch initiatives for program ${programId}:`, error);
       throw error;
     }
   },
   
-  async getBySubProgram(subprogramId: string) {
+  getBySubProgram: async (subProgramId: string) => {
     try {
-      const response = await api.get(`/strategic-initiatives/?subprogram=${subprogramId}`);
+      const response = await api.get(`/strategic-initiatives/?subprogram=${subProgramId}`);
       return response;
     } catch (error) {
-      console.error(`Failed to get initiatives for subprogram ${subprogramId}:`, error);
+      console.error(`Failed to fetch initiatives for subprogram ${subProgramId}:`, error);
       throw error;
     }
   },
   
-  async getById(id: string) {
+  create: async (data: any) => {
     try {
-      const response = await api.get(`/strategic-initiatives/${id}/`);
-      return response;
-    } catch (error) {
-      console.error(`Failed to get initiative ${id}:`, error);
-      throw error;
-    }
-  },
-  
-  async create(data: any) {
-    try {
-      // Ensure CSRF token is fresh
-      await auth.getCurrentUser();
-      
-      // Format the data properly to avoid type issues
-      const formattedData = { ...data };
-      
-      // Ensure strategic_objective is a string if provided
-      if (formattedData.strategic_objective !== null && formattedData.strategic_objective !== undefined) {
-        // If it's an object, extract the ID as a string
-        if (typeof formattedData.strategic_objective === 'object' && formattedData.strategic_objective !== null) {
-          if (formattedData.strategic_objective.id !== undefined) {
-            formattedData.strategic_objective = String(formattedData.strategic_objective.id);
-          } else {
-            console.error("Strategic objective object doesn't have an ID property:", formattedData.strategic_objective);
-            throw new Error("Invalid strategic objective object");
-          }
-        } else {
-          // Otherwise ensure it's a string
-          formattedData.strategic_objective = String(formattedData.strategic_objective);
-        }
-      }
-      
-      // Ensure program is a string if provided
-      if (formattedData.program !== null && formattedData.program !== undefined) {
-        // If it's an object, extract the ID as a string
-        if (typeof formattedData.program === 'object' && formattedData.program !== null) {
-          if (formattedData.program.id !== undefined) {
-            formattedData.program = String(formattedData.program.id);
-          } else {
-            console.error("Program object doesn't have an ID property:", formattedData.program);
-            throw new Error("Invalid program object");
-          }
-        } else {
-          // Otherwise ensure it's a string
-          formattedData.program = String(formattedData.program);
-        }
-      }
-      
-      // Ensure organization is a number if provided
-      if (formattedData.organization_id) {
-        formattedData.organization = Number(formattedData.organization_id);
-        delete formattedData.organization_id;
-      } else if (formattedData.organization && typeof formattedData.organization !== 'number') {
-        formattedData.organization = Number(formattedData.organization);
-      }
-      
-      // Ensure weight is a number
-      if (typeof formattedData.weight === 'string') {
-        formattedData.weight = Number(formattedData.weight);
-      }
-      
-      // Ensure initiative_feed is a string if provided
-      if (formattedData.initiative_feed !== null && formattedData.initiative_feed !== undefined) {
-        formattedData.initiative_feed = String(formattedData.initiative_feed);
-      }
-      
-      // Remove any properties that shouldn't be sent to the API
-      delete formattedData.initiative_feed_name;
-      delete formattedData.strategic_objective_title;
-      delete formattedData.program_name;
-      delete formattedData.organization_name;
-      delete formattedData.performance_measures;
-      delete formattedData.main_activities;
-      delete formattedData.total_measures_weight;
-      delete formattedData.total_activities_weight;
-      
-      console.log("Creating initiative with formatted data:", formattedData);
-      
-      const response = await api.post('/strategic-initiatives/', formattedData);
-      return response;
+      const response = await api.post('/strategic-initiatives/', data);
+      return response.data;
     } catch (error) {
       console.error('Failed to create initiative:', error);
       throw error;
     }
   },
   
-  async update(id: string, data: any) {
+  update: async (id: string, data: any) => {
     try {
-      // Ensure CSRF token is fresh
-      await auth.getCurrentUser();
-      
-      // Format the data properly to avoid type issues
-      const formattedData = { ...data };
-      
-      // Ensure strategic_objective is a string if provided
-      if (formattedData.strategic_objective !== null && formattedData.strategic_objective !== undefined) {
-        // If it's an object, extract the ID as a string
-        if (typeof formattedData.strategic_objective === 'object' && formattedData.strategic_objective !== null) {
-          if (formattedData.strategic_objective.id !== undefined) {
-            formattedData.strategic_objective = String(formattedData.strategic_objective.id);
-          } else {
-            console.error("Strategic objective object doesn't have an ID property:", formattedData.strategic_objective);
-            throw new Error("Invalid strategic objective object");
-          }
-        } else {
-          // Otherwise ensure it's a string
-          formattedData.strategic_objective = String(formattedData.strategic_objective);
-        }
-      }
-      
-      // Ensure program is a string if provided
-      if (formattedData.program !== null && formattedData.program !== undefined) {
-        // If it's an object, extract the ID as a string
-        if (typeof formattedData.program === 'object' && formattedData.program !== null) {
-          if (formattedData.program.id !== undefined) {
-            formattedData.program = String(formattedData.program.id);
-          } else {
-            console.error("Program object doesn't have an ID property:", formattedData.program);
-            throw new Error("Invalid program object");
-          }
-        } else {
-          // Otherwise ensure it's a string
-          formattedData.program = String(formattedData.program);
-        }
-      }
-      
-      // Ensure organization is a number if provided
-      if (formattedData.organization_id) {
-        formattedData.organization = Number(formattedData.organization_id);
-        delete formattedData.organization_id;
-      } else if (formattedData.organization && typeof formattedData.organization !== 'number') {
-        formattedData.organization = Number(formattedData.organization);
-      }
-      
-      // Ensure weight is a number
-      if (typeof formattedData.weight === 'string') {
-        formattedData.weight = Number(formattedData.weight);
-      }
-      
-      // Ensure initiative_feed is a string if provided
-      if (formattedData.initiative_feed !== null && formattedData.initiative_feed !== undefined) {
-        formattedData.initiative_feed = String(formattedData.initiative_feed);
-      }
-      
-      // Remove any properties that shouldn't be sent to the API
-      delete formattedData.initiative_feed_name;
-      delete formattedData.strategic_objective_title;
-      delete formattedData.program_name;
-      delete formattedData.organization_name;
-      delete formattedData.performance_measures;
-      delete formattedData.main_activities;
-      delete formattedData.total_measures_weight;
-      delete formattedData.total_activities_weight;
-      
-      console.log("Updating initiative with formatted data:", formattedData);
-      
-      const response = await api.patch(`/strategic-initiatives/${id}/`, formattedData);
-      return response;
+      const response = await api.patch(`/strategic-initiatives/${id}/`, data);
+      return response.data;
     } catch (error) {
       console.error(`Failed to update initiative ${id}:`, error);
       throw error;
     }
   },
   
-  async delete(id: string) {
+  delete: async (id: string) => {
     try {
-      const response = await api.delete(`/strategic-initiatives/${id}/`);
-      return response;
+      await api.delete(`/strategic-initiatives/${id}/`);
+      return { success: true };
     } catch (error) {
       console.error(`Failed to delete initiative ${id}:`, error);
       throw error;
     }
   },
   
-  async getWeightSummary(parentId: string, parentType: 'objective' | 'program' | 'subprogram') {
+  getWeightSummary: async (parentId: string, parentType: string) => {
     try {
-      let url = '/strategic-initiatives/weight_summary/?';
+      const paramName = parentType === 'objective' ? 'objective' : 
+                       parentType === 'program' ? 'program' : 
+                       'subprogram';
       
-      if (parentType === 'objective') {
-        url += `objective=${parentId}`;
-      } else if (parentType === 'program') {
-        url += `program=${parentId}`;
-      } else if (parentType === 'subprogram') {
-        url += `subprogram=${parentId}`;
-      }
-      
-      const response = await api.get(url);
+      const response = await api.get(`/strategic-initiatives/weight-summary/?${paramName}=${parentId}`);
       return response;
     } catch (error) {
-      console.error('Failed to get initiatives weight summary:', error);
-      throw error;
+      console.error(`Failed to fetch initiative weight summary for ${parentType} ${parentId}:`, error);
+      return {
+        data: {
+          total_initiatives_weight: 0,
+          remaining_weight: 100,
+          parent_weight: 100,
+          is_valid: true
+        }
+      };
     }
   },
   
-  async validateInitiativesWeight(parentId: string, parentType: 'objective' | 'program' | 'subprogram') {
+  validateInitiativesWeight: async (parentId: string, parentType: string) => {
     try {
-      let url = '/strategic-initiatives/validate_initiatives_weight/?';
-      
-      if (parentType === 'objective') {
-        url += `objective=${parentId}`;
-      } else if (parentType === 'program') {
-        url += `program=${parentId}`;
-      } else if (parentType === 'subprogram') {
-        url += `subprogram=${parentId}`;
-      }
-      
-      const response = await api.post(url);
+      const response = await api.post(`/strategic-initiatives/validate-initiatives-weight/?${parentType}=${parentId}`);
       return response;
     } catch (error) {
-      console.error('Failed to validate initiatives weight:', error);
+      console.error(`Failed to validate initiative weights for ${parentType} ${parentId}:`, error);
       throw error;
     }
   }
 };
-
 
 // Performance measures service
 export const performanceMeasures = {
@@ -1181,15 +876,9 @@ export const performanceMeasures = {
     try {
       await ensureCsrfToken();
       
-      // Ensure the initiative field is a string
-      if (data.initiative && typeof data.initiative !== 'string') {
-        data.initiative = String(data.initiative);
-      }
-      
-      // Create a copy of the data to avoid modifying the original
       const submissionData = { ...data };
+      if (data.initiative) submissionData.initiative = String(data.initiative);
       
-      // Ensure selected_months and selected_quarters are arrays
       if (!Array.isArray(submissionData.selected_months)) {
         submissionData.selected_months = submissionData.selected_months ? [submissionData.selected_months] : [];
       }
@@ -1210,15 +899,9 @@ export const performanceMeasures = {
     try {
       await ensureCsrfToken();
       
-      // Ensure the initiative field is a string
-      if (data.initiative && typeof data.initiative !== 'string') {
-        data.initiative = String(data.initiative);
-      }
-      
-      // Create a copy of the data to avoid modifying the original
       const submissionData = { ...data };
+      if (data.initiative) submissionData.initiative = String(data.initiative);
       
-      // Ensure selected_months and selected_quarters are arrays
       if (!Array.isArray(submissionData.selected_months)) {
         submissionData.selected_months = submissionData.selected_months ? [submissionData.selected_months] : [];
       }
@@ -1261,8 +944,7 @@ export const performanceMeasures = {
       await ensureCsrfToken();
       
       const id = String(initiativeId);
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/performance-measures/validate_measures_weight/?initiative=${id}&_=${timestamp}`);
+      const response = await api.post(`/performance-measures/validate_measures_weight/?initiative=${id}`);
       return response;
     } catch (error) {
       console.error('Failed to validate performance measures weight:', error);
@@ -1297,15 +979,9 @@ export const mainActivities = {
     try {
       await ensureCsrfToken();
       
-      // Ensure the initiative field is a string
-      if (data.initiative && typeof data.initiative !== 'string') {
-        data.initiative = String(data.initiative);
-      }
-      
-      // Create a copy of the data to avoid modifying the original
       const submissionData = { ...data };
+      if (data.initiative) submissionData.initiative = String(data.initiative);
       
-      // Ensure selected_months and selected_quarters are arrays
       if (!Array.isArray(submissionData.selected_months)) {
         submissionData.selected_months = submissionData.selected_months ? [submissionData.selected_months] : [];
       }
@@ -1326,15 +1002,9 @@ export const mainActivities = {
     try {
       await ensureCsrfToken();
       
-      // Ensure the initiative field is a string
-      if (data.initiative && typeof data.initiative !== 'string') {
-        data.initiative = String(data.initiative);
-      }
-      
-      // Create a copy of the data to avoid modifying the original
       const submissionData = { ...data };
+      if (data.initiative) submissionData.initiative = String(data.initiative);
       
-      // Ensure selected_months and selected_quarters are arrays
       if (!Array.isArray(submissionData.selected_months)) {
         submissionData.selected_months = submissionData.selected_months ? [submissionData.selected_months] : [];
       }
@@ -1374,9 +1044,7 @@ export const mainActivities = {
   async validateActivitiesWeight(initiativeId: string) {
     try {
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/main-activities/validate_activities_weight/?initiative=${initiativeId}&_=${timestamp}`);
+      const response = await api.post(`/main-activities/validate_activities_weight/?initiative=${initiativeId}`);
       return response;
     } catch (error) {
       console.error('Failed to validate main activities weight:', error);
@@ -1434,17 +1102,7 @@ export const plans = {
   async getAll() {
     try {
       const timestamp = new Date().getTime();
-      console.log('Fetching all user plans...');
-      const response = api.get(`/plans/?_=${timestamp}&random=${Math.random()}`, { 
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate', 
-          'Pragma': 'no-cache',
-          'Expires': '0',
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-      });
-      console.log('Plans response status:', response.status);
-      console.log('Plans data:', response.data);
+      const response = await api.get(`/plans/?_=${timestamp}`);
       return response;
     } catch (error) {
       console.error('Failed to get plans:', error);
@@ -1454,8 +1112,6 @@ export const plans = {
   
   async getById(id: string) {
     try {
-      const timestamp = new Date().getTime();
-      console.log(`Fetching plan details for ID: ${id}`);
       const response = await api.get(`/plans/${id}/`);
       return response.data;
     } catch (error) {
@@ -1466,20 +1122,16 @@ export const plans = {
   
   async create(data: any) {
     try {
-      // Clone data to avoid modifying original
       const formattedData = {...data};
       
-      // Ensure organization is formatted correctly
-      if (formattedData.organization && typeof formattedData.organization !== 'number') {
+      if (formattedData.organization) {
         formattedData.organization = Number(formattedData.organization);
       }
       
-      // Ensure strategic_objective is a string
-      if (formattedData.strategic_objective && typeof formattedData.strategic_objective !== 'string') {
+      if (formattedData.strategic_objective) {
         formattedData.strategic_objective = String(formattedData.strategic_objective);
       }
       
-      // Format dates properly
       if (formattedData.from_date) {
         formattedData.from_date = new Date(formattedData.from_date).toISOString().split('T')[0];
       }
@@ -1489,9 +1141,7 @@ export const plans = {
       }
       
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/plans/?_=${timestamp}`, formattedData);
+      const response = await api.post(`/plans/`, formattedData);
       return response.data;
     } catch (error) {
       console.error('Failed to create plan:', error);
@@ -1520,33 +1170,19 @@ export const plans = {
   },
   
   async submitToEvaluator(id: string) {
-    if (!id) {
-      throw new Error("Cannot submit: Missing plan ID");
-    }
-    
     try {
-      console.log(`Submitting plan ${id} for review`);
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/plans/${id}/submit/?_=${timestamp}`);
-      console.log(`Plan submission response:`, response);
+      const response = await api.post(`/plans/${id}/submit/`);
       return response.data;
     } catch (error: any) {
-      console.error(`Failed to submit plan ${id}:`, error);
-      
       let errorMessage = "Failed to submit plan for review";
-      
-      if (error.response && error.response.data) {
-        if (error.response.data.detail) {
-          errorMessage = error.response.data.detail;
-        } else if (error.response.data.message) {
-          errorMessage = error.response.data.message;
-        }
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
       } else if (error.message) {
         errorMessage = error.message;
       }
-
       throw new Error(errorMessage);
     }
   },
@@ -1554,9 +1190,7 @@ export const plans = {
   async approvePlan(id: string, feedback: string) {
     try {
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/plans/${id}/approve/?_=${timestamp}`, { feedback });
+      const response = await api.post(`/plans/${id}/approve/`, { feedback });
       return response;
     } catch (error) {
       console.error(`Failed to approve plan ${id}:`, error);
@@ -1567,9 +1201,7 @@ export const plans = {
   async rejectPlan(id: string, feedback: string) {
     try {
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.post(`/plans/${id}/reject/?_=${timestamp}`, { feedback });
+      const response = await api.post(`/plans/${id}/reject/`, { feedback });
       return response;
     } catch (error) {
       console.error(`Failed to reject plan ${id}:`, error);
@@ -1580,9 +1212,7 @@ export const plans = {
   async getPendingReviews() {
     try {
       await ensureCsrfToken();
-      
-      const timestamp = new Date().getTime();
-      const response = await api.get(`/plans/pending_reviews/?_=${timestamp}`);
+      const response = await api.get(`/plans/pending_reviews/`);
       return response;
     } catch (error) {
       console.error('Failed to get pending reviews:', error);
@@ -1598,13 +1228,12 @@ export const processDataForExport = (objectives: any[], language: string = 'en')
 
 export const formatCurrency = (value: any): string => {
   if (!value || value === 'N/A') return '-';
-  
-  // Convert to number if it's a string
   const numValue = typeof value === 'string' ? parseFloat(value) : value;
-  
-  // Check if it's a valid number
   if (isNaN(numValue)) return '-';
-  
-  // Format with $ and thousand separators
   return `$${numValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
+
+// Start session refresh when module is loaded
+if (typeof window !== 'undefined') {
+  startSessionRefresh();
+}
