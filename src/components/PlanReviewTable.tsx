@@ -326,23 +326,10 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
           return;
         }
 
-    let totalInitiatives = 0;
-    let totalMeasures = 0;
-    let totalActivities = 0;
         initiative.main_activities.forEach(activity => {
           if (!activity || !activity.budget) {
-      const objInitiatives = objective.initiatives || [];
-      totalInitiatives += objInitiatives.length;
-      
-      objInitiatives.forEach(initiative => {
-        // Count measures
-        const measures = initiative.performance_measures || [];
-        totalMeasures += measures.length;
-        
-        // Count activities and calculate budget
+            return;
           }
-        totalActivities += activities.length;
-        
           
           try {
             const cost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
@@ -369,10 +356,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
       });
     });
 
-      totalGap,
-      totalInitiatives,
-      totalMeasures,
-      totalActivities
+    return { total, government, sdg, partners, other, available, gap };
   };
 
   // Count total activities and measures across all objectives
@@ -519,26 +503,19 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                 <span>Government:</span>
                 <span className="font-medium text-gray-900">${budgetTotals.government.toLocaleString()}</span>
               </div>
-                {totals.totalInitiatives}
+              <div className="flex justify-between">
                 <span>Partners:</span>
                 <span className="font-medium text-gray-900">${budgetTotals.partners.toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
-              <h3 className="text-sm font-medium text-gray-500">Total Measures</h3>
+                <span>SDG:</span>
                 <span className="font-medium text-gray-900">${budgetTotals.sdg.toLocaleString()}</span>
-                {totals.totalMeasures}
-              </p>
-            </div>
-
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <h3 className="text-sm font-medium text-gray-500">Total Activities</h3>
-              <p className="mt-2 text-3xl font-semibold text-gray-900">
-                {totals.totalActivities}
+              </div>
+              <div className="flex justify-between">
+                <span>Other:</span>
                 <span className="font-medium text-gray-900">${budgetTotals.other.toLocaleString()}</span>
               </div>
-          </div>
               <div className="flex justify-between">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <span>Available:</span>
                 <span className="font-medium text-blue-600">${budgetTotals.available.toLocaleString()}</span>
               </div>
@@ -546,29 +523,6 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                 <span>Gap:</span>
                 <span className="font-medium text-red-600">${budgetTotals.gap.toLocaleString()}</span>
               </div>
-            </div>
-            
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <h3 className="text-sm font-medium text-gray-500">Total Available</h3>
-              <p className="mt-2 text-3xl font-semibold text-blue-600">
-                ${totals.totalAvailable.toLocaleString()}
-              </p>
-            </div>
-            
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <h3 className="text-sm font-medium text-gray-500">Funding Gap</h3>
-              <p className="mt-2 text-3xl font-semibold text-red-600">
-                ${totals.totalGap.toLocaleString()}
-              </p>
-            </div>
-            
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <h3 className="text-sm font-medium text-gray-500">Funding Rate</h3>
-              <p className="mt-2 text-3xl font-semibold text-purple-600">
-                {totals.totalBudgetRequired > 0 
-                  ? Math.round((totals.totalAvailable / totals.totalBudgetRequired) * 100) 
-                  : 0}%
-              </p>
             </div>
           </div>
         )}
