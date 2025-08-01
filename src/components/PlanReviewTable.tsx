@@ -180,16 +180,39 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                 try {
                   console.log(`PlanReviewTable: Fetching data for initiative ${initiative.id} (${initiative.name})`);
                   
-                  // Fetch performance measures with timeout and fallback
-                  let measuresResponse;
+                  // Fetch performance measures with multiple fallback strategies
+                  let measuresResponse = { data: [] };
                   try {
+                    // Strategy 1: Direct API call with timeout
                     measuresResponse = await Promise.race([
                       performanceMeasures.getByInitiative(initiative.id),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error('Measures timeout')), 8000))
+                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
                     ]);
                   } catch (measuresError) {
-                    console.warn(`PlanReviewTable: Failed to fetch measures for initiative ${initiative.id}:`, measuresError);
-                    measuresResponse = { data: [] };
+                    console.warn(`PlanReviewTable: Strategy 1 failed for initiative ${initiative.id}:`, measuresError);
+                    
+                    // Strategy 2: Try with different parameter format
+                    try {
+                      const response = await Promise.race([
+                        api.get(`/performance-measures/`, { params: { initiative: initiative.id } }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+                      ]);
+                      measuresResponse = { data: response.data?.results || response.data || [] };
+                    } catch (fallbackError) {
+                      console.warn(`PlanReviewTable: Strategy 2 failed for initiative ${initiative.id}:`, fallbackError);
+                      
+                      // Strategy 3: Try direct endpoint
+                      try {
+                        const directResponse = await Promise.race([
+                          api.get(`/performance-measures/?initiative_id=${initiative.id}`),
+                          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+                        ]);
+                        measuresResponse = { data: directResponse.data?.results || directResponse.data || [] };
+                      } catch (directError) {
+                        console.warn(`PlanReviewTable: All strategies failed for initiative ${initiative.id}, using empty data`);
+                        measuresResponse = { data: [] };
+                      }
+                    }
                   }
                   
                   const allMeasures = measuresResponse?.data || [];
@@ -202,16 +225,39 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     return !measure.organization || !currentUserOrgId || measure.organization === currentUserOrgId;
                   });
 
-                  // Fetch main activities with timeout and fallback
-                  let activitiesResponse;
+                  // Fetch main activities with multiple fallback strategies
+                  let activitiesResponse = { data: [] };
                   try {
+                    // Strategy 1: Direct API call with timeout
                     activitiesResponse = await Promise.race([
                       mainActivities.getByInitiative(initiative.id),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error('Activities timeout')), 8000))
+                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
                     ]);
                   } catch (activitiesError) {
-                    console.warn(`PlanReviewTable: Failed to fetch activities for initiative ${initiative.id}:`, activitiesError);
-                    activitiesResponse = { data: [] };
+                    console.warn(`PlanReviewTable: Strategy 1 failed for activities initiative ${initiative.id}:`, activitiesError);
+                    
+                    // Strategy 2: Try with different parameter format
+                    try {
+                      const response = await Promise.race([
+                        api.get(`/main-activities/`, { params: { initiative: initiative.id } }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+                      ]);
+                      activitiesResponse = { data: response.data?.results || response.data || [] };
+                    } catch (fallbackError) {
+                      console.warn(`PlanReviewTable: Strategy 2 failed for activities initiative ${initiative.id}:`, fallbackError);
+                      
+                      // Strategy 3: Try direct endpoint
+                      try {
+                        const directResponse = await Promise.race([
+                          api.get(`/main-activities/?initiative_id=${initiative.id}`),
+                          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+                        ]);
+                        activitiesResponse = { data: directResponse.data?.results || directResponse.data || [] };
+                      } catch (directError) {
+                        console.warn(`PlanReviewTable: All strategies failed for activities initiative ${initiative.id}, using empty data`);
+                        activitiesResponse = { data: [] };
+                      }
+                    }
                   }
                   
                   const allActivities = activitiesResponse?.data || [];
@@ -232,7 +278,8 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     main_activities: filteredActivities
                   };
                 } catch (error) {
-                  console.warn(`Error processing initiative ${initiative.id}:`, error);
+                  console.warn(`PlanReviewTable: Error processing initiative ${initiative.id}:`, error);
+                  // In production, always return the initiative with empty data rather than failing
                   return {
                     ...initiative,
                     performance_measures: [],
