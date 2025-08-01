@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useForm, Controller, useFieldArray } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { Calculator, DollarSign, Info, Plus, Trash2, AlertCircle } from 'lucide-react';
 import type { MeetingWorkshopCost, TrainingLocation } from '../types/costing';
 import { locations, perDiems, accommodations, participantCosts, sessionCosts, landTransports, airTransports } from '../lib/api';
@@ -10,14 +10,9 @@ const FALLBACK_LOCATIONS = [
   { id: 'fallback-2', name: 'Adama', region: 'Oromia', is_hardship_area: false }
 ];
 
-interface TrainingLocationItem {
-  locationId: string;
-  days: number;
-  participants: number;
-}
-
 interface TransportRoute {
   id: string;
+  transportId?: string;
   origin: string;
   destination: string;
   price: number;
@@ -26,49 +21,18 @@ interface TransportRoute {
   destinationName?: string;
 }
 
-interface MeetingWorkshopCostingToolProps {
-  activityType: 'Meeting' | 'Workshop';
-  onCalculate: (costs: MeetingWorkshopCost) => void;
-  onCancel: () => void;
-  initialData?: MeetingWorkshopCost;
-}
-
-interface MeetingLocation {
+interface MeetingWorkshopLocation {
   locationId: string;
   days: number;
   participants: number;
 }
 
-const TRAINING_LOCATIONS = [
-  { value: '1', label: 'Addis Ababa' },
-  { value: '2', label: 'Dire Dawa' },
-  { value: '3', label: 'Mekelle' },
-  { value: '4', label: 'Bahir Dar' },
-  { value: '5', label: 'Hawassa' },
-  { value: '6', label: 'Jimma' },
-  { value: '7', label: 'Adama' },
-  { value: '8', label: 'Dessie' },
-  { value: '9', label: 'Gondar' },
-  { value: '10', label: 'Harar' }
-];
-
-const PARTICIPANT_COSTS = [
-  { value: 'All', label: 'All Participant Costs' },
-  { value: 'STATIONERY', label: 'Stationery' },
-  { value: 'MATERIALS', label: 'Training Materials' },
-  { value: 'CERTIFICATES', label: 'Certificates' },
-  { value: 'BAGS', label: 'Bags' },
-  { value: 'T_SHIRTS', label: 'T-Shirts' }
-];
-
-const SESSION_COSTS = [
-  { value: 'All', label: 'All Session Costs' },
-  { value: 'FACILITATOR', label: 'Facilitator Fee' },
-  { value: 'VENUE', label: 'Venue Rental' },
-  { value: 'EQUIPMENT', label: 'Equipment Rental' },
-  { value: 'REFRESHMENTS', label: 'Refreshments' },
-  { value: 'LUNCH', label: 'Lunch' }
-];
+interface MeetingWorkshopCostingToolProps {
+  activityType: 'Meeting' | 'Workshop';
+  onCalculate: (costs: MeetingWorkshopCost) => void;
+  onCancel: () => void;
+  initialData?: MeetingWorkshopCost | null;
+}
 
 const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({ 
   activityType,
@@ -85,66 +49,121 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
   const [sessionCostsData, setSessionCostsData] = useState<any[]>([]);
   const [landTransportsData, setLandTransportsData] = useState<any[]>([]);
   const [airTransportsData, setAirTransportsData] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [landTransportRoutes, setLandTransportRoutes] = useState<TransportRoute[]>([]);
   const [airTransportRoutes, setAirTransportRoutes] = useState<TransportRoute[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [selectedLocations, setSelectedLocations] = useState<TrainingLocationItem[]>([]);
-  const [costMode, setCostMode] = useState<'perdiem' | 'accommodation'>('perdiem');
-  const [selectedAccommodationTypes, setSelectedAccommodationTypes] = useState<string[]>([]);
-  const [additionalLocations, setAdditionalLocations] = useState<MeetingLocation[]>([]);
+  const [additionalLocations, setAdditionalLocations] = useState<MeetingWorkshopLocation[]>([]);
   const [apiBaseUrl, setApiBaseUrl] = useState<string>('');
   
+  console.log('MeetingWorkshopCostingTool received initialData:', initialData);
+  
   const { register, watch, control, setValue, handleSubmit, formState: { errors }, trigger, getValues } = useForm<MeetingWorkshopCost>({
-    defaultValues: initialData || {
-      description: '',
-      numberOfDays: 1,
-      numberOfParticipants: 1,
-      numberOfSessions: 1,
-      location: '', // Main location (kept for backward compatibility)
-      trainingLocation: '',
-      trainingLocations: [],
-      costMode: 'perdiem',
-      additionalParticipantCosts: [],
-      additionalSessionCosts: [],
-      transportRequired: false,
-      otherCosts: 0
+    defaultValues: {
+      description: initialData?.description || '',
+      numberOfDays: initialData?.numberOfDays || 1,
+      numberOfParticipants: initialData?.numberOfParticipants || 1,
+      numberOfSessions: initialData?.numberOfSessions || 1,
+      location: initialData?.location || '',
+      additionalParticipantCosts: initialData?.additionalParticipantCosts || [],
+      additionalSessionCosts: initialData?.additionalSessionCosts || [],
+      transportRequired: initialData?.transportRequired || false,
+      landTransportParticipants: initialData?.landTransportParticipants || 0,
+      airTransportParticipants: initialData?.airTransportParticipants || 0,
+      otherCosts: initialData?.otherCosts || 0,
+      justification: initialData?.justification || '',
+      totalBudget: initialData?.totalBudget || 0
     }
   });
 
+  // Initialize state from initialData
+  useEffect(() => {
+    if (initialData) {
+      console.log('Initializing MeetingWorkshopCostingTool with data:', initialData);
+      
+      // Set transport routes if they exist
+      if (initialData.landTransportRoutes && Array.isArray(initialData.landTransportRoutes)) {
+        setLandTransportRoutes(initialData.landTransportRoutes);
+      }
+      
+      if (initialData.airTransportRoutes && Array.isArray(initialData.airTransportRoutes)) {
+        setAirTransportRoutes(initialData.airTransportRoutes);
+      }
+      
+      // Set additional locations if they exist
+      if (initialData.meetings && Array.isArray(initialData.meetings)) {
+        setAdditionalLocations(initialData.meetings);
+      } else if (initialData.workshops && Array.isArray(initialData.workshops)) {
+        setAdditionalLocations(initialData.workshops);
+      }
+      
+      // Set form values
+      setValue('description', initialData.description || '');
+      setValue('numberOfDays', initialData.numberOfDays || 1);
+      setValue('numberOfParticipants', initialData.numberOfParticipants || 1);
+      setValue('numberOfSessions', initialData.numberOfSessions || 1);
+      setValue('location', initialData.location || '');
+      setValue('additionalParticipantCosts', initialData.additionalParticipantCosts || []);
+      setValue('additionalSessionCosts', initialData.additionalSessionCosts || []);
+      setValue('transportRequired', initialData.transportRequired || false);
+      setValue('landTransportParticipants', initialData.landTransportParticipants || 0);
+      setValue('airTransportParticipants', initialData.airTransportParticipants || 0);
+      setValue('otherCosts', initialData.otherCosts || 0);
+      setValue('justification', initialData.justification || '');
+      setValue('totalBudget', initialData.totalBudget || 0);
+    }
+  }, [initialData, setValue]);
+
   const watchTransportRequired = watch('transportRequired');
-  const watchCostMode = watch('costMode');
-  const watchLocation = watch('trainingLocation');
+  const watchLocation = watch('location');
   const watchDays = watch('numberOfDays');
   const watchParticipants = watch('numberOfParticipants');
-  const watchNumberOfSessions = watch('numberOfSessions');
+  const watchSessions = watch('numberOfSessions');
   const watchParticipantCosts = watch('additionalParticipantCosts');
   const watchSessionCosts = watch('additionalSessionCosts');
   const watchLandTransport = watch('landTransportParticipants');
   const watchAirTransport = watch('airTransportParticipants');
   const watchOtherCosts = watch('otherCosts');
 
-  // Re-validate transport participants when total participants changes
-  useEffect(() => {
-    if (watchTransportRequired) {
-      trigger(['landTransportParticipants', 'airTransportParticipants']);
-    }
-  }, [watchParticipants, trigger, watchTransportRequired]);
-
   // Get API base URL
   useEffect(() => {
     const apiUrl = import.meta.env.VITE_API_URL || '';
     setApiBaseUrl(apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl);
+    console.log('API Base URL for meeting/workshop tool:', apiUrl);
   }, []);
-
+  
   // Fetch all required data from the database
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
       setError(null);
+      console.log('Fetching meeting/workshop costing data...');
       
       try {
+        // Fetch all data using the API service functions
         const [
-          locationsResult,
+          locationsResult
+        ] = await Promise.all([ 
+          locations.getAll()
+        ]);
+
+        // Check if locations data is valid
+        if (!locationsResult?.data || !Array.isArray(locationsResult.data)) {
+          console.error('Invalid locations data received in MeetingWorkshopCostingTool:', 
+            locationsResult?.data ? typeof locationsResult.data : 'no data');
+          console.log('Using fallback location data');
+          setLocationsData(FALLBACK_LOCATIONS);
+          // Continue with fallback data instead of throwing error
+        } else {
+          // Process and set the data
+          const locationsData = locationsResult?.data || [];
+          console.log(`Successfully loaded ${locationsData.length} locations`);
+          setLocationsData(locationsData);
+        }
+        
+        console.log('Fetching other costing data...');
+        
+        // Fetch other data after locations are loaded successfully
+        const [
           perDiemsResult,
           accommodationsResult,
           participantCostsResult,
@@ -152,10 +171,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           landTransportsResult,
           airTransportsResult
         ] = await Promise.all([
-          locations.getAll().catch(e => {
-            console.error('Error fetching locations:', e);
-            return { data: FALLBACK_LOCATIONS };
-          }),
           perDiems.getAll().catch(e => {
             console.error('Error fetching perDiems:', e);
             return { data: [] };
@@ -182,8 +197,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           })
         ]);
         
-        // Process and set the data
-        setLocationsData(locationsResult?.data || FALLBACK_LOCATIONS);
+        // Process and set the remaining data
         setPerDiemsData(perDiemsResult?.data || []);
         setAccommodationsData(accommodationsResult?.data || []);
         setParticipantCostsData(participantCostsResult?.data || []);
@@ -191,8 +205,8 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         setLandTransportsData(landTransportsResult?.data || []);
         setAirTransportsData(airTransportsResult?.data || []);
         
-        console.log('Data fetched successfully:', {
-          locations: locationsResult?.data?.length || 0,
+        console.log('All costing data loaded successfully:', {
+          locations: locationsData.length,
           perDiems: perDiemsResult?.data?.length || 0,
           accommodations: accommodationsResult?.data?.length || 0,
           participantCosts: participantCostsResult?.data?.length || 0,
@@ -201,16 +215,38 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           airTransports: airTransportsResult?.data?.length || 0
         });
         
-        // Set default location if available
-        if (locationsResult?.data?.length > 0 && !initialData?.trainingLocation) {
-          setValue('trainingLocation', locationsResult.data[0].id);
+        // Set default location if available and not already set
+        if (locationsData.length > 0 && !initialData?.location) {
+          console.log('Setting default location:', locationsData[0].id);
+          setValue('location', locationsData[0].id);
         }
         
       } catch (error) {
         console.error('Error fetching meeting/workshop costing data:', error);
-        setError('Failed to load costing data from database. Using default values.');
-        // Use fallback data
-        setLocationsData(FALLBACK_LOCATIONS);
+        // Create a more detailed error message
+        let errorMessage = 'Failed to load location data from the database. ';
+        
+        if (error.message) {
+          errorMessage += error.message;
+        }
+        
+        if (error.response?.status) {
+          errorMessage += ` (Status: ${error.response.status})`;
+        }
+        
+        if (error.config?.url) {
+          console.error(`Failed request URL: ${error.config.url}`);
+        }
+        
+        if (error.response?.data) {
+          console.error('Error response data:', error.response.data);
+          errorMessage += ' Server responded with an error.';
+        } else {
+          if (error.request) {
+            errorMessage += ' No response received from server.';
+          }
+        }
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -219,41 +255,11 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     fetchData();
   }, [setValue, initialData]);
 
-  // Add a new location
-  const addLocation = () => {
-    if (locationsData.length === 0) return;
-    
-    const newLocation: TrainingLocationItem = {
-      locationId: locationsData[0]?.id || '',
-      days: 1,
-      participants: 1
-    };
-    
-    setSelectedLocations([...selectedLocations, newLocation]);
-  };
-  
-  // Remove a location
-  const removeLocation = (index: number) => {
-    const newLocations = [...selectedLocations];
-    newLocations.splice(index, 1);
-    setSelectedLocations(newLocations);
-  };
-  
-  // Update a location
-  const updateLocation = (index: number, field: keyof TrainingLocationItem, value: any) => {
-    const newLocations = [...selectedLocations];
-    newLocations[index] = {
-      ...newLocations[index],
-      [field]: value
-    };
-    setSelectedLocations(newLocations);
-  };
-
   // Add/remove/update functions for multiple locations
-  const addMeetingLocation = () => {
+  const addMeetingWorkshopLocation = () => {
     if (!locationsData.length) return;
     
-    const newLocation: MeetingLocation = {
+    const newLocation: MeetingWorkshopLocation = {
       locationId: locationsData[0]?.id || '',
       days: 1,
       participants: 1
@@ -262,13 +268,13 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     setAdditionalLocations([...additionalLocations, newLocation]);
   };
   
-  const removeMeetingLocation = (index: number) => {
+  const removeMeetingWorkshopLocation = (index: number) => {
     const newLocations = [...additionalLocations];
     newLocations.splice(index, 1);
     setAdditionalLocations(newLocations);
   };
   
-  const updateMeetingLocation = (index: number, field: keyof MeetingLocation, value: any) => {
+  const updateMeetingWorkshopLocation = (index: number, field: keyof MeetingWorkshopLocation, value: any) => {
     const newLocations = [...additionalLocations];
     newLocations[index] = {
       ...newLocations[index],
@@ -277,7 +283,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     setAdditionalLocations(newLocations);
   };
 
-  // Add a new land transport route
+  // Transport route management functions
   const addLandTransportRoute = () => {
     // Use first available transport route from database with actual price
     const defaultTransport = landTransportsData.length > 0 ? landTransportsData[0] : null;
@@ -292,22 +298,20 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     }]);
   };
 
-  // Add a new air transport route
   const addAirTransportRoute = () => {
-    // Use first available air transport route from database with actual price  
+    // Use first available air transport route from database with actual price
     const defaultTransport = airTransportsData.length > 0 ? airTransportsData[0] : null;
     
     setAirTransportRoutes([...airTransportRoutes, {
       id: Date.now().toString(),
       transportId: defaultTransport?.id || '',
       origin: defaultTransport?.origin_name || 'Addis Ababa',
-      destination: defaultTransport?.destination_name || 'Destination', 
+      destination: defaultTransport?.destination_name || 'Destination',
       price: Number(defaultTransport?.price || 0),
       participants: 1
     }]);
   };
 
-  // Remove transport routes
   const removeLandTransportRoute = (id: string) => {
     setLandTransportRoutes(landTransportRoutes.filter(route => route.id !== id));
   };
@@ -316,26 +320,14 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     setAirTransportRoutes(airTransportRoutes.filter(route => route.id !== id));
   };
 
-  // Update transport route
   const updateLandTransportRoute = (id: string, field: string, value: any) => {
     setLandTransportRoutes(landTransportRoutes.map(route => {
       if (route.id === id) {
         // If changing transport selection, update price from database
         if (field === 'transportId') {
           const selectedTransport = landTransportsData.find(t => t.id === value);
-         console.log('Selected land transport:', selectedTransport);
-         console.log('All available land transports:', landTransportsData);
           if (selectedTransport) {
-            // Extract price - try different possible field names
-            const dbPrice = Number(selectedTransport.price) || 
-                           Number(selectedTransport.single_trip_price) || 
-                           Number(selectedTransport.round_trip_price) || 0;
-            console.log('Database price for land transport:', dbPrice);
-            console.log('Price field contents:', {
-              price: selectedTransport.price,
-              single_trip_price: selectedTransport.single_trip_price,
-              round_trip_price: selectedTransport.round_trip_price
-            });
+            const dbPrice = Number(selectedTransport.price) || 0;
             return {
               ...route,
               transportId: value,
@@ -345,7 +337,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
             };
           }
         }
-        // For other field updates, don't override price if it came from database
         if (field === 'price') {
           return { ...route, [field]: Number(value) || 0 };
         }
@@ -361,19 +352,8 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         // If changing transport selection, update price from database
         if (field === 'transportId') {
           const selectedTransport = airTransportsData.find(t => t.id === value);
-          console.log('Selected air transport:', selectedTransport);
-          console.log('All available air transports:', airTransportsData);
           if (selectedTransport) {
-            // Extract price - try different possible field names
-            const dbPrice = Number(selectedTransport.price) || 
-                           Number(selectedTransport.single_trip_price) || 
-                           Number(selectedTransport.round_trip_price) || 0;
-            console.log('Database price for air transport:', dbPrice);
-            console.log('Price field contents:', {
-              price: selectedTransport.price,
-              single_trip_price: selectedTransport.single_trip_price,
-              round_trip_price: selectedTransport.round_trip_price
-            });
+            const dbPrice = Number(selectedTransport.price) || 0;
             return {
               ...route,
               transportId: value,
@@ -383,7 +363,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
             };
           }
         }
-        // For other field updates, don't override price if it came from database
         if (field === 'price') {
           return { ...route, [field]: Number(value) || 0 };
         }
@@ -393,93 +372,160 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
     }));
   };
 
+  // Re-validate transport participants when total participants changes
+  useEffect(() => {
+    if (watchTransportRequired) {
+      trigger(['landTransportParticipants', 'airTransportParticipants']);
+    }
+  }, [watchParticipants, trigger, watchTransportRequired]);
+  
   // Calculate average transport costs
   const calculateAvgLandTransportCost = () => {
     if (!landTransportsData || landTransportsData.length === 0) return 1000;
-    
-    let total = 0;
-    let count = 0;
-    
-    landTransportsData.forEach(transport => {
-      const price = Number(transport.price);
-      if (!isNaN(price) && price > 0) {
-        total += price;
-        count++;
-      }
-    });
-    
-    return count > 0 ? total / count : 1000;
+    return 1000;
   };
 
   const calculateAvgAirTransportCost = () => {
     if (!airTransportsData || airTransportsData.length === 0) return 5000;
-    
-    let total = 0;
-    let count = 0;
-    
-    airTransportsData.forEach(transport => {
-      const price = Number(transport.single_trip_price);
-      if (!isNaN(price) && price > 0) {
-        total += price;
-        count++;
-      }
-    });
-    
-    return count > 0 ? total / count : 5000;
+    return 5000;
   };
 
-  // Memoize these values to avoid recalculating on every render
   const avgLandTransportCost = calculateAvgLandTransportCost();
   const avgAirTransportCost = calculateAvgAirTransportCost();
 
-  // Initialize cost mode and other form values from initialData
+  const watchTransportRequired = watch('transportRequired');
+  const watchLocation = watch('location');
+  const watchDays = watch('numberOfDays');
+  const watchParticipants = watch('numberOfParticipants');
+  const watchSessions = watch('numberOfSessions');
+  const watchParticipantCosts = watch('additionalParticipantCosts');
+  const watchSessionCosts = watch('additionalSessionCosts');
+  const watchLandTransport = watch('landTransportParticipants');
+  const watchAirTransport = watch('airTransportParticipants');
+  const watchOtherCosts = watch('otherCosts');
+
+  // Get API base URL
   useEffect(() => {
-    if (initialData) {
-      // Set cost mode from initial data
-      if (initialData.costMode) {
-        setCostMode(initialData.costMode);
-        setValue('costMode', initialData.costMode);
-      }
+    const apiUrl = import.meta.env.VITE_API_URL || '';
+    setApiBaseUrl(apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl);
+    console.log('API Base URL for meeting/workshop tool:', apiUrl);
+  }, []);
+  
+  // Fetch all required data from the database
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      console.log('Fetching meeting/workshop costing data...');
       
-      // Set selected locations from initial data
-      if (initialData.trainings && Array.isArray(initialData.trainings) && initialData.trainings.length > 0) {
-        setSelectedLocations(initialData.trainings);
-      }
-      
-      // Set transport routes from initial data if available
-      if (initialData.transportRequired && initialData.transportCosts) {
-        // Initialize with some example routes based on counts
-        if (initialData.transportCosts.landParticipants > 0) {
-          const landRoute: TransportRoute = {
-            id: Date.now().toString(),
-            origin: 'Origin',
-            destination: 'Destination',
-            price: 1000,
-            participants: initialData.transportCosts.landParticipants
-          };
-          setLandTransportRoutes([landRoute]);
+      try {
+        // Fetch all data using the API service functions
+        const [
+          locationsResult
+        ] = await Promise.all([ 
+          locations.getAll()
+        ]);
+
+        // Check if locations data is valid
+        if (!locationsResult?.data || !Array.isArray(locationsResult.data)) {
+          console.error('Invalid locations data received in MeetingWorkshopCostingTool:', 
+            locationsResult?.data ? typeof locationsResult.data : 'no data');
+          console.log('Using fallback location data');
+          setLocationsData(FALLBACK_LOCATIONS);
+        } else {
+          const locationsData = locationsResult?.data || [];
+          console.log(`Successfully loaded ${locationsData.length} locations`);
+          setLocationsData(locationsData);
         }
         
-        if (initialData.transportCosts.airParticipants > 0) {
-          const airRoute: TransportRoute = {
-            id: (Date.now() + 100).toString(),
-            origin: 'Origin',
-            destination: 'Destination',
-            price: 5000,
-            participants: initialData.transportCosts.airParticipants
-          };
-          setAirTransportRoutes([airRoute]);
+        console.log('Fetching other costing data...');
+        
+        // Fetch other data after locations are loaded successfully
+        const [
+          perDiemsResult,
+          accommodationsResult,
+          participantCostsResult,
+          sessionCostsResult,
+          landTransportsResult,
+          airTransportsResult
+        ] = await Promise.all([
+          perDiems.getAll().catch(e => {
+            console.error('Error fetching perDiems:', e);
+            return { data: [] };
+          }),
+          accommodations.getAll().catch(e => {
+            console.error('Error fetching accommodations:', e);
+            return { data: [] };
+          }),
+          participantCosts.getAll().catch(e => {
+            console.error('Error fetching participantCosts:', e);
+            return { data: [] };
+          }),
+          sessionCosts.getAll().catch(e => {
+            console.error('Error fetching sessionCosts:', e);
+            return { data: [] };
+          }),
+          landTransports.getAll().catch(e => {
+            console.error('Error fetching landTransports:', e);
+            return { data: [] };
+          }),
+          airTransports.getAll().catch(e => {
+            console.error('Error fetching airTransports:', e);
+            return { data: [] };
+          })
+        ]);
+        
+        // Process and set the remaining data
+        setPerDiemsData(perDiemsResult?.data || []);
+        setAccommodationsData(accommodationsResult?.data || []);
+        setParticipantCostsData(participantCostsResult?.data || []);
+        setSessionCostsData(sessionCostsResult?.data || []);
+        setLandTransportsData(landTransportsResult?.data || []);
+        setAirTransportsData(airTransportsResult?.data || []);
+        
+        console.log('All costing data loaded successfully:', {
+          locations: locationsData.length,
+          perDiems: perDiemsResult?.data?.length || 0,
+          accommodations: accommodationsResult?.data?.length || 0,
+          participantCosts: participantCostsResult?.data?.length || 0,
+          sessionCosts: sessionCostsResult?.data?.length || 0,
+          landTransports: landTransportsResult?.data?.length || 0,
+          airTransports: airTransportsResult?.data?.length || 0
+        });
+        
+        // Set default location if available and not already set
+        if (locationsData.length > 0 && !initialData?.location) {
+          console.log('Setting default location:', locationsData[0].id);
+          setValue('location', locationsData[0].id);
         }
+        
+      } catch (error) {
+        console.error('Error fetching meeting/workshop costing data:', error);
+        let errorMessage = 'Failed to load location data from the database. ';
+        
+        if (error.message) {
+          errorMessage += error.message;
+        }
+        
+        if (error.response?.status) {
+          errorMessage += ` (Status: ${error.response.status})`;
+        }
+        
+        setError(errorMessage);
+      } finally {
+        setIsLoading(false);
       }
-    }
-  }, [initialData, setValue]);
+    };
+    
+    fetchData();
+  }, [setValue, initialData]);
 
   useEffect(() => {
     const calculateTotalBudget = () => {
       const locationId = watchLocation;
       const days = watchDays || 0;
       const participants = watchParticipants || 0;
-      const numSessions = Number(watchNumberOfSessions) || 1;
+      const numSessions = Number(watchSessions) || 1;
       
       // Get location data
       const location = locationsData.find(loc => String(loc.id) === String(locationId));
@@ -488,68 +534,36 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         return 0;
       }
       
-      // Per diem or accommodation calculation
-      let perDiemTotal = 0;
-      if (costMode === 'perdiem') {
-        const perDiem = perDiemsData.find(pd => 
-          String(pd.location_id) === String(locationId) || 
-          String(pd.location) === String(locationId)
-        );
+      // Hall with refreshment calculation (for meetings/workshops)
+      let accommodationTotal = 0;
+      const accommodation = accommodationsData.find(acc => 
+        (String(acc.location_id) === String(locationId) || 
+         String(acc.location) === String(locationId)) && 
+        acc.service_type === 'HALL_REFRESHMENT'
+      );
+      
+      if (accommodation) {
+        accommodationTotal = Number(accommodation.price) * participants * days;
         
-        if (perDiem) {
-          const perDiemAmount = Number(perDiem.amount) || 0;
-          const hardshipAmount = Number(perDiem.hardship_allowance_amount) || 0;
-          perDiemTotal = (perDiemAmount + hardshipAmount) * participants * days;
+        // Add accommodation for additional locations
+        additionalLocations.forEach(loc => {
+          if (!loc.locationId) return;
           
-          // Add per diems for additional locations
-          additionalLocations.forEach(loc => {
-            if (!loc.locationId) return;
-            
-            const additionalPerDiem = perDiemsData.find(pd => 
-              String(pd.location_id) === String(loc.locationId) || 
-              String(pd.location) === String(loc.locationId)
-            );
-            
-            if (additionalPerDiem) {
-              const addPerDiemAmount = Number(additionalPerDiem.amount || 0);
-              const addHardshipAmount = Number(additionalPerDiem.hardship_allowance_amount || 0);
-              perDiemTotal += (addPerDiemAmount + addHardshipAmount) * loc.participants * loc.days;
-            }
-          });
-        }
-      } else {
-        // Accommodation mode
-        selectedAccommodationTypes.forEach(serviceType => {
-          const accommodation = accommodationsData.find(acc => 
-            (String(acc.location_id) === String(locationId) || 
-             String(acc.location) === String(locationId)) && 
-            acc.service_type === serviceType
+          const additionalAccommodation = accommodationsData.find(acc => 
+            (String(acc.location_id) === String(loc.locationId) || 
+             String(acc.location) === String(loc.locationId)) && 
+            acc.service_type === 'HALL_REFRESHMENT'
           );
           
-          if (accommodation) {
-            perDiemTotal += Number(accommodation.price) * participants * days;
-            
-            // Add accommodation for additional locations
-            additionalLocations.forEach(loc => {
-              if (!loc.locationId) return;
-              
-              const additionalAccommodation = accommodationsData.find(acc => 
-                (String(acc.location_id) === String(loc.locationId) || 
-                 String(acc.location) === String(loc.locationId)) && 
-                acc.service_type === serviceType
-              );
-              
-              if (additionalAccommodation) {
-                perDiemTotal += Number(additionalAccommodation.price) * loc.participants * loc.days;
-              }
-            });
+          if (additionalAccommodation) {
+            accommodationTotal += Number(additionalAccommodation.price) * loc.participants * loc.days;
           }
         });
       }
       
       // Participant costs
       let participantCostsTotal = 0;
-      if (watchParticipantCosts && watchParticipantCosts.length > 0) {
+      if (watchParticipantCosts) {
         if (watchParticipantCosts.includes('ALL')) {
           const allCosts = participantCostsData
             .filter(cost => cost.cost_type !== 'ALL')
@@ -557,8 +571,8 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           
           participantCostsTotal = participants * allCosts;
           
-          // Apply to additional locations
           additionalLocations.forEach(loc => {
+            if (!loc.locationId) return;
             participantCostsTotal += loc.participants * allCosts;
           });
         } else {
@@ -567,8 +581,8 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
             if (costItem) {
               participantCostsTotal += participants * Number(costItem.price || 0);
               
-              // Apply to additional locations
               additionalLocations.forEach(loc => {
+                if (!loc.locationId) return;
                 participantCostsTotal += loc.participants * Number(costItem.price || 0);
               });
             }
@@ -578,7 +592,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
       
       // Session costs
       let sessionCostsTotal = 0;
-      if (watchSessionCosts && watchSessionCosts.length > 0) {
+      if (watchSessionCosts) {
         if (watchSessionCosts.includes('ALL')) {
           const allCosts = sessionCostsData
             .filter(cost => cost.cost_type !== 'ALL')
@@ -611,69 +625,46 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         if (landTransportRoutes.length === 0 && airTransportRoutes.length === 0) {
           const landParticipants = Number(watchLandTransport) || 0;
           const airParticipants = Number(watchAirTransport) || 0;
-          transportTotal = (landParticipants * 1000) + (airParticipants * 5000);
+          transportTotal = (landParticipants * avgLandTransportCost) + 
+                           (airParticipants * avgAirTransportCost);
         }
       }
       
       // Other costs
       const otherCostsTotal = Number(watchOtherCosts) || 0;
       
-      // Calculate subtotal first
-      const subtotal = perDiemTotal + participantCostsTotal + sessionCostsTotal + transportTotal + otherCostsTotal;
-      
-      // Apply session multiplier to entire subtotal
-      const total = subtotal * numSessions;
+      // Calculate total
+      const total = accommodationTotal + participantCostsTotal + sessionCostsTotal + 
+                    transportTotal + otherCostsTotal;
       
       setValue('totalBudget', total);
       return total;
     };
 
     calculateTotalBudget();
-  }, [watchLocation, watchDays, watchParticipants, watchNumberOfSessions,
-      watchParticipantCosts, watchSessionCosts, watchTransportRequired,
-      watchLandTransport, watchAirTransport, watchOtherCosts, setValue,
-      locationsData, perDiemsData, accommodationsData, participantCostsData, sessionCostsData,
-      costMode, selectedAccommodationTypes, additionalLocations, landTransportRoutes, airTransportRoutes]);
-
-  // Show loading state while fetching data
-  if (isLoading) {
-    return <div className="flex flex-col items-center justify-center p-8">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mb-4"></div>
-      <p className="text-gray-700">Loading costing data from database...</p>
-    </div>;
-  }
-
-  // If no locations data is available, show an error
-  if (!locationsData || locationsData.length === 0) {
-    return <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
-      <div className="flex items-center text-red-500 mb-2">
-        <AlertCircle className="h-6 w-6 mr-2 flex-shrink-0" />
-        <h3 className="text-lg font-medium text-red-800">Location data not available</h3>
-      </div>
-      <p className="text-red-600 mb-4">Could not load location data from the database.</p>
-      <button onClick={onCancel} className="px-4 py-2 bg-white border border-red-300 rounded-md text-red-700 hover:bg-red-50">
-        Go Back
-      </button>
-    </div>;
-  }
+  }, [
+    watchLocation, watchDays, watchParticipants, watchSessions, watchTransportRequired,
+    watchLandTransport, watchAirTransport, watchParticipantCosts, watchSessionCosts,
+    watchOtherCosts, setValue, locationsData, perDiemsData, accommodationsData,
+    participantCostsData, sessionCostsData,
+    additionalLocations, landTransportRoutes, airTransportRoutes
+  ]);
 
   const handleFormSubmit = async (data: MeetingWorkshopCost) => {
     try {
       setIsCalculating(true);
       setError(null);
       
-      // Make sure we have a valid budget amount
       const calculatedBudget = watch('totalBudget') || 0;
-      const formValues = getValues();
       
-      console.log('Meeting/Workshop calculated budget:', calculatedBudget);
+      console.log(`${activityType} calculated budget:`, calculatedBudget);
       
       if (!calculatedBudget || calculatedBudget <= 0) {
         setError('Total budget must be greater than 0');
         return;
       }
 
-      // Calculate transport costs for detail
+      // Calculate transport costs
       let transportCosts = {
         landParticipants: 0,
         airParticipants: 0,
@@ -681,7 +672,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
       };
       
       if (watchTransportRequired) {
-        // Count participants from land routes
         let landParticipantsTotal = 0;
         let landCostTotal = 0;
         
@@ -690,7 +680,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           landCostTotal += Number(route.price || 0) * Number(route.participants || 1);
         });
         
-        // Count participants from air routes
         let airParticipantsTotal = 0;
         let airCostTotal = 0;
         
@@ -715,74 +704,54 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           airParticipants: airParticipantsTotal,
           totalCost: landCostTotal + airCostTotal
         };
-      }
-      
-      // Prepare data for multiple locations
-      const trainingLocations = [
-        ...selectedLocations.map(loc => ({
-          locationId: loc.locationId,
-          days: Number(loc.days) || 0,
-          participants: Number(loc.participants) || 0
-        }))
-      ];
-
-      // Validate transport participants
-      if (watchTransportRequired) {
-        // Calculate total transport participants from routes
-        let totalTransportParticipants = 0;
         
-        landTransportRoutes.forEach(route => {
-          totalTransportParticipants += Number(route.participants || 0);
-        });
-        
-        airTransportRoutes.forEach(route => {
-          totalTransportParticipants += Number(route.participants || 0);
-        });
-        
-        // Add legacy transport participants if routes are empty
-        if (landTransportRoutes.length === 0 && airTransportRoutes.length === 0) {
-          totalTransportParticipants = (Number(watchLandTransport) || 0) + (Number(watchAirTransport) || 0);
-        }
-        
-        // Get total participants (main plus additional locations)
+        // Validate transport participants
+        const totalTransportParticipants = landParticipantsTotal + airParticipantsTotal;
         let totalParticipants = Number(watchParticipants) || 0;
-        selectedLocations.forEach(loc => {
+        
+        additionalLocations.forEach(loc => {
           totalParticipants += Number(loc.participants) || 0;
         });
         
-        const totalTransport = totalTransportParticipants;
-        
-        if (totalTransport > (watchParticipants || 0)) {
-          setError(`Total transport participants (${totalTransport}) cannot exceed total participants (${totalParticipants})`);
+        if (totalTransportParticipants > totalParticipants) {
+          setError(`Total transport participants (${totalTransportParticipants}) cannot exceed total participants (${totalParticipants})`);
           return;
         }
       }
-
-      // Prepare streamlined data for the budget form - only include what's needed
+      
+      // Prepare streamlined data for the budget form
       const budgetData = {
         activity: data.activity,
         budget_calculation_type: 'WITH_TOOL',
-        activity_type: activityType, // Explicitly set type (Meeting or Workshop)
-        estimated_cost_with_tool: Number(calculatedBudget) || 0,
-        totalBudget: Number(calculatedBudget) || 0, // Add totalBudget for consistency
-        estimated_cost: Number(calculatedBudget) || 0, // Add estimated_cost for consistency
-        estimated_cost_without_tool: 0, // Not used since we're using the tool
+        activity_type: activityType,
+        estimated_cost_with_tool: calculatedBudget || 0,
+        totalBudget: calculatedBudget || 0,
+        estimated_cost: calculatedBudget || 0,
+        estimated_cost_without_tool: 0,
         government_treasury: 0,
         sdg_funding: 0,
         partners_funding: 0,
         other_funding: 0,
         meeting_workshop_details: {
           description: data.description,
-          trainingLocation: data.trainingLocation,
           numberOfDays: Number(data.numberOfDays) || 0,
           numberOfParticipants: Number(data.numberOfParticipants) || 0,
           numberOfSessions: Number(data.numberOfSessions) || 0,
-          costMode: costMode,
-          selectedAccommodationTypes: selectedAccommodationTypes,
-          additionalLocations: additionalLocations,
+          location: data.location,
+          meetings: activityType === 'Meeting' ? additionalLocations.map(loc => ({
+            locationId: loc.locationId,
+            days: Number(loc.days) || 0,
+            participants: Number(loc.participants) || 0
+          })) : undefined,
+          workshops: activityType === 'Workshop' ? additionalLocations.map(loc => ({
+            locationId: loc.locationId,
+            days: Number(loc.days) || 0,
+            participants: Number(loc.participants) || 0
+          })) : undefined,
           additionalParticipantCosts: data.additionalParticipantCosts,
           additionalSessionCosts: data.additionalSessionCosts,
           transportRequired: data.transportRequired,
+          transportCosts: transportCosts,
           landTransportRoutes: landTransportRoutes,
           airTransportRoutes: airTransportRoutes,
           otherCosts: Number(data.otherCosts) || 0,
@@ -790,24 +759,47 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         }
       };
       
-      // Pass the prepared budget data to the parent component
       onCalculate(budgetData);
     } catch (err: any) {
-      console.error('Failed to process costs:', err);
+      console.error(`Failed to process ${activityType.toLowerCase()} costs:`, err);
       setError(err.message || 'Failed to process costs. Please try again.');
     } finally {
       setIsCalculating(false);
     }
   };
 
+  // Show loading state while fetching data
+  if (isLoading) {
+    return <div className="flex flex-col items-center justify-center p-8">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mb-4"></div>
+      <p className="text-gray-700">Loading costing data from database...</p>
+    </div>;
+  }
+
+  // If no locations data is available, show an error
+  if (!locationsData || locationsData.length === 0) {
+    return <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
+      <div className="flex items-center text-red-500 mb-2">
+        <AlertCircle className="h-6 w-6 mr-2 flex-shrink-0" />
+        <h3 className="text-lg font-medium text-red-800">Location data not available</h3>
+      </div>
+      <p className="text-red-600 mb-4">Could not load location data from the database. Please check your connection and try again.</p>
+      <button
+        onClick={onCancel}
+        className="mt-4 px-4 py-2 bg-white border border-red-300 rounded-md text-red-700 hover:bg-red-50"
+      >
+        Go Back
+      </button>
+    </div>;
+  }
+
   return (
     <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6 max-h-[75vh] overflow-y-auto p-2 pb-20">
       <div className="flex items-center justify-between">
         <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 flex-1">
-          <h3 className="text-lg font-medium text-blue-800 mb-2 flex items-center gap-2">
+          <h3 className="text-lg font-medium text-blue-800 mb-2 flex items-center">
             <Calculator className="h-5 w-5 mr-2" />
-            {activityType} Cost Calculator 
-            <span className="bg-blue-200 text-xs px-2 py-1 rounded-full">{costMode === 'perdiem' ? 'Per Diem Mode' : 'Accommodation Mode'}</span>
+            {activityType} Cost Calculator
           </h3>
           <p className="text-sm text-blue-600">
             Fill in the {activityType.toLowerCase()} details below to calculate the total budget.
@@ -833,14 +825,14 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
       )}
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Description of {activityType} Activity <span className="text-red-500">*</span>
+        <label className="block text-sm font-medium text-gray-700">
+          Description of {activityType} Activity
         </label>
         <textarea
           {...register('description', { required: 'Description is required' })}
           rows={3}
           className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-          placeholder={`Describe what will be covered in this ${activityType.toLowerCase()}...`}
+          placeholder={`Describe the ${activityType.toLowerCase()} activity...`}
         />
         {errors.description && (
           <p className="mt-1 text-sm text-red-600">{errors.description.message}</p>
@@ -848,6 +840,28 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Number of Sessions <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="number"
+            min="1"
+            {...register('numberOfSessions', {
+              required: 'Number of sessions is required',
+              min: { value: 1, message: 'Minimum 1 session required' },
+              valueAsNumber: true
+            })}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          />
+          {errors.numberOfSessions && (
+            <p className="mt-1 text-sm text-red-600">{errors.numberOfSessions.message}</p>
+          )}
+          <p className="mt-1 text-xs text-gray-500">
+            Number of times this {activityType.toLowerCase()} will occur
+          </p>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Number of Days <span className="text-red-500">*</span>
@@ -861,7 +875,6 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
               valueAsNumber: true
             })}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            placeholder="Enter number of days"
           />
           {errors.numberOfDays && (
             <p className="mt-1 text-sm text-red-600">{errors.numberOfDays.message}</p>
@@ -881,41 +894,20 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
               valueAsNumber: true
             })}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            placeholder="Enter number of participants"
           />
           {errors.numberOfParticipants && (
             <p className="mt-1 text-sm text-red-600">{errors.numberOfParticipants.message}</p>
           )}
         </div>
-        
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Number of Sessions <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="number"
-            min="1"
-            {...register('numberOfSessions', {
-              required: 'Number of sessions is required',
-              min: { value: 1, message: 'Minimum 1 session required' },
-              valueAsNumber: true
-            })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            placeholder="Enter number of sessions"
-          />
-          {errors.numberOfSessions && (
-            <p className="mt-1 text-sm text-red-600">{errors.numberOfSessions.message}</p>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Meeting Location
+            {activityType} Location <span className="text-red-500">*</span>
           </label>
           <select
-            {...register('trainingLocation', { required: 'Location is required' })}
+            {...register('location', { required: 'Location is required' })}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
           >
             {locationsData.map(location => (
@@ -924,92 +916,21 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
               </option>
             ))}
           </select>
-          {errors.trainingLocation && (
-            <p className="mt-1 text-sm text-red-600">{errors.trainingLocation.message}</p>
+          {errors.location && (
+            <p className="mt-1 text-sm text-red-600">{errors.location.message}</p>
           )}
         </div>
       </div>
-
-      {/* Cost Mode Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-3">
-          Cost Calculation Method
-        </label>
-        <div className="flex space-x-4">
-          <label className="inline-flex items-center">
-            <input
-              type="radio"
-              value="perdiem"
-              checked={costMode === 'perdiem'}
-              onChange={() => setCostMode('perdiem')}
-              className="form-radio h-4 w-4 text-blue-600"
-            />
-            <span className="ml-2 text-sm text-gray-700">Per Diem</span>
-          </label>
-          <label className="inline-flex items-center">
-            <input
-              type="radio"
-              value="accommodation"
-              checked={costMode === 'accommodation'}
-              onChange={() => setCostMode('accommodation')}
-              className="form-radio h-4 w-4 text-blue-600"
-            />
-            <span className="ml-2 text-sm text-gray-700">Accommodation</span>
-          </label>
-        </div>
-        <p className="mt-1 text-xs text-gray-500">
-          {costMode === 'perdiem' 
-            ? 'Uses standard per diem rates for the location' 
-            : 'Uses specific accommodation service rates'}
-        </p>
-      </div>
-
-      {/* Accommodation Type Selection (only when accommodation mode is selected) */}
-      {costMode === 'accommodation' && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Accommodation Types
-          </label>
-          <div className="space-y-2">
-            {['BED', 'LUNCH', 'DINNER', 'HALL_REFRESHMENT', 'FULL_BOARD'].map(type => (
-              <label key={type} className="inline-flex items-center mr-4">
-                <input
-                  type="checkbox"
-                  checked={selectedAccommodationTypes.includes(type)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelectedAccommodationTypes([...selectedAccommodationTypes, type]);
-                    } else {
-                      setSelectedAccommodationTypes(selectedAccommodationTypes.filter(t => t !== type));
-                    }
-                  }}
-                  className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">
-                  {type === 'BED' ? 'Bed Only' :
-                   type === 'LUNCH' ? 'Lunch' :
-                   type === 'DINNER' ? 'Dinner' :
-                   type === 'HALL_REFRESHMENT' ? 'Hall with Refreshment' :
-                   'Full Board'}
-                </span>
-              </label>
-            ))}
-          </div>
-          <p className="mt-1 text-xs text-gray-500">
-            Select the accommodation services required for the meeting/workshop
-          </p>
-        </div>
-      )}
-
-      {/* Additional Meeting Locations */}
+        
+      {/* Additional Locations */}
       <div className="mt-4">
         <div className="flex justify-between items-center mb-4">
           <label className="block text-sm font-medium text-gray-700">
-            Additional Meeting Locations (optional)
+            Additional {activityType} Locations (optional)
           </label>
           <button
             type="button"
-            onClick={addMeetingLocation}
+            onClick={addMeetingWorkshopLocation}
             className="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -1027,7 +948,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
                   </label>
                   <select
                     value={location.locationId}
-                    onChange={(e) => updateMeetingLocation(index, 'locationId', e.target.value)}
+                    onChange={(e) => updateMeetingWorkshopLocation(index, 'locationId', e.target.value)}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                   >
                     {locationsData.map((loc) => (
@@ -1045,7 +966,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
                     type="number"
                     min="1"
                     value={location.days}
-                    onChange={(e) => updateMeetingLocation(index, 'days', Number(e.target.value))}
+                    onChange={(e) => updateMeetingWorkshopLocation(index, 'days', Number(e.target.value))}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                   />
                 </div>
@@ -1057,14 +978,14 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
                     type="number"
                     min="1"
                     value={location.participants}
-                    onChange={(e) => updateMeetingLocation(index, 'participants', Number(e.target.value))}
+                    onChange={(e) => updateMeetingWorkshopLocation(index, 'participants', Number(e.target.value))}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                   />
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => removeMeetingLocation(index)}
+                onClick={() => removeMeetingWorkshopLocation(index)}
                 className="mt-4 text-red-500 hover:text-red-700"
               >
                 <Trash2 className="h-5 w-5" />
@@ -1077,140 +998,63 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
           <p className="text-sm text-gray-500 italic">No additional locations added</p>
         )}
       </div>
-      
-      {/* Cost Display Section */}
-      {watchCostMode === 'perdiem' && (
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-          <h4 className="text-sm font-medium text-yellow-800 mb-2">Per Diem Rates</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {locationsData.slice(0, 4).map((location) => {
-              const perDiem = perDiemsData.find(pd => 
-                String(pd.location) === String(location.id)
-              );
-              
-              if (!perDiem) return null;
-              
-              return (
-                <div key={location.id} className="bg-white p-2 rounded text-xs">
-                  <p className="font-medium text-gray-800">{location.name}</p>
-                  <div className="flex justify-between mt-1">
-                    <span>Base Rate:</span>
-                    <span>{Number(perDiem.amount || 0).toLocaleString()} ETB</span>
-                  </div>
-                  {Number(perDiem.hardship_allowance_amount) > 0 && (
-                    <div className="flex justify-between mt-1">
-                      <span>Hardship:</span>
-                      <span>{Number(perDiem.hardship_allowance_amount || 0).toLocaleString()} ETB</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      
-      {costMode === 'accommodation' && (
-        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-          <h4 className="text-sm font-medium text-blue-800 mb-2">Accommodation Rates</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {locationsData.slice(0, 4).map((location) => {
-              const accommodation = accommodationsData.find(acc => 
-                (String(acc.location_id) === String(location.id) || 
-                 String(acc.location) === String(location.id)) &&
-                acc.service_type === 'FULL_BOARD'
-              );
-              
-              if (!accommodation) return null;
-              
-              return (
-                <div key={location.id} className="bg-white p-2 rounded text-xs">
-                  <p className="font-medium text-gray-800">{location.name}</p>
-                  <div className="flex justify-between mt-1">
-                    <span>Full Board:</span>
-                    <span>{Number(accommodation.price || 0).toLocaleString()} ETB</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-      <div className="space-y-2">
-        <p className="mt-1 text-sm text-gray-500">
-          Number of separate sessions during the {activityType.toLowerCase()} period
-        </p>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">
+          Additional Participant Costs
+        </label>
+        <div className="mt-2 space-y-2">
+          {participantCostsData.map(cost => (
+            <label key={cost.cost_type} className="inline-flex items-center mr-4">
+              <input
+                type="checkbox"
+                value={cost.cost_type}
+                checked={watchParticipantCosts?.includes(cost.cost_type)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const currentValues = watchParticipantCosts || [];
+                  const newValues = e.target.checked
+                    ? [...currentValues, value]
+                    : currentValues.filter(v => v !== value);
+                  setValue('additionalParticipantCosts', newValues);
+                }}
+                className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              />
+              <span className="ml-2 text-sm text-gray-700">
+                {cost.cost_type_display || cost.cost_type} (ETB {Number(cost.price).toLocaleString()})
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700">
-          Additional Cost per Participant
+          Additional Session Costs
         </label>
-        <Controller
-          name="additionalParticipantCosts"
-          control={control}
-          render={({ field }) => (
-            <div className="mt-2 space-y-2">
-              {participantCostsData.map(cost => (
-                <label key={cost.cost_type} className="inline-flex items-center mr-4">
-                  <input
-                    type="checkbox"
-                    value={cost.cost_type}
-                    checked={field.value?.includes(cost.cost_type)}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      const currentValues = field.value || [];
-                      const newSelection = e.target.checked
-                        ? [...currentValues, value]
-                        : currentValues.filter(v => v !== value);
-                      field.onChange(newSelection);
-                    }}
-                    className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">
-                    {cost.cost_type_display || cost.cost_type} (ETB {Number(cost.price).toLocaleString()})
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700">
-          Additional Cost per Session
-        </label>
-        <Controller
-          name="additionalSessionCosts"
-          control={control}
-          render={({ field }) => (
-            <div className="mt-2 space-y-2">
-              {sessionCostsData.map(cost => (
-                <label key={cost.cost_type} className="inline-flex items-center mr-4">
-                  <input
-                    type="checkbox"
-                    value={cost.cost_type}
-                    checked={field.value?.includes(cost.cost_type)}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      const currentValues = field.value || [];
-                      const newSelection = e.target.checked
-                        ? [...currentValues, value]
-                        : currentValues.filter(v => v !== value);
-                      field.onChange(newSelection);
-                    }}
-                    className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">
-                    {cost.cost_type_display || cost.cost_type} (ETB {Number(cost.price).toLocaleString()})
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        />
+        <div className="mt-2 space-y-2">
+          {sessionCostsData.map(cost => (
+            <label key={cost.cost_type} className="inline-flex items-center mr-4">
+              <input
+                type="checkbox"
+                value={cost.cost_type}
+                checked={watchSessionCosts?.includes(cost.cost_type)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const currentValues = watchSessionCosts || [];
+                  const newValues = e.target.checked
+                    ? [...currentValues, value]
+                    : currentValues.filter(v => v !== value);
+                  setValue('additionalSessionCosts', newValues);
+                }}
+                className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              />
+              <span className="ml-2 text-sm text-gray-700">
+                {cost.cost_type_display || cost.cost_type} (ETB {Number(cost.price).toLocaleString()})
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
 
       <div>
@@ -1404,7 +1248,7 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center">
             <DollarSign className="h-5 w-5 text-green-600 mr-1 flex-shrink-0" />
-            <span className="text-lg font-medium text-gray-900">Total Budget</span>
+            <span className="text-lg font-medium text-gray-900">Total {activityType} Budget</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="text-right">
@@ -1412,16 +1256,16 @@ const MeetingWorkshopCostingTool: React.FC<MeetingWorkshopCostingToolProps> = ({
                 ETB {watch('totalBudget')?.toLocaleString() || '0'}
               </span>
               <p className="text-xs text-gray-500">
-                {selectedLocations.length > 0 && `Including ${selectedLocations.length} additional location(s)`}
+                {additionalLocations.length > 0 && `Including ${additionalLocations.length} additional location(s)`}
               </p>
             </div>
           </div>
         </div>
         <p className="mt-2 text-sm text-gray-500 flex items-center">
           <Info className="h-4 w-4 mr-1" />
-          This total includes {costMode === 'perdiem' ? 'per diem' : 'accommodation'} costs
+          This total includes hall with refreshment costs
           {additionalLocations.length > 0 && ` for ${additionalLocations.length + 1} location(s)`}
-          {accommodationsData.length > 0 && costMode === 'accommodation' ? ' (from database)' : ''}
+          {participantCostsData.length > 0 ? ' (from database)' : ''}
         </p>
       </div>
 
