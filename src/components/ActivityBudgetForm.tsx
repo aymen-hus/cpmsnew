@@ -223,7 +223,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
       data.partners_funding = totalPartnersFunding;
       
       // Store the partners list in the budget data
-      budgetData.partners_list = partners;
+      data.partners_list = partners;
       
       // Validate total funding against estimated cost
       const updatedTotalFunding = Number(data.government_treasury || 0) +
