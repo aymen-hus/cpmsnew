@@ -5,10 +5,9 @@ from .models import (
     Program, StrategicInitiative, PerformanceMeasure, MainActivity,
     ActivityBudget, ActivityCostingAssumption, InitiativeFeed,
     Location, LandTransport, AirTransport, PerDiem, Accommodation,
-    ParticipantCost, SessionCost, PrintingCost, SupervisorCost,ProcurementItem,
-    TeamDeskPlan,TeamDeskPlanReview,DetailActivity
+    ParticipantCost, SessionCost, PrintingCost, SupervisorCost,ProcurementItem,Plan
 )
-
+admin.site.register(Plan)
 class OrganizationAdminForm(forms.ModelForm):
     core_values_text = forms.CharField(
         widget=forms.Textarea(attrs={'rows': 5}),
@@ -157,8 +156,7 @@ class ActivityBudgetAdmin(admin.ModelAdmin):
                 'government_treasury',
                 'sdg_funding',
                 'partners_funding',
-                'other_funding',
-                'partners_details'
+                'other_funding'
             ),
         }),
         ('Training Details', {
@@ -252,126 +250,5 @@ class ProcurementItemAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             'fields': ('category', 'name', 'unit', 'unit_price')
-        }),
-    )
-
-
-@admin.register(TeamDeskPlan)
-class TeamDeskPlanAdmin(admin.ModelAdmin):
-    list_display = ('get_team_desk_name', 'get_organization_name', 'status', 'get_leo_eo_plan_name', 'submitted_at', 'created_at')
-    list_filter = ('status', 'organization', 'team_desk')
-    search_fields = ('team_desk__name', 'organization__name', 'leo_eo_plan__organization__name')
-    fieldsets = (
-        (None, {
-            'fields': ('organization', 'team_desk', 'leo_eo_plan', 'status')
-        }),
-        ('Content', {
-            'fields': ('objectives', 'initiatives', 'performance_measures', 'main_activities', 'detail_activities'),
-        }),
-        ('Timestamps', {
-            'fields': ('submitted_at', 'created_at', 'updated_at'),
-            'classes': ('collapse',),
-        }),
-    )
-    filter_horizontal = ('objectives', 'initiatives', 'performance_measures', 'main_activities', 'detail_activities')
-    raw_id_fields = ('organization', 'team_desk', 'leo_eo_plan')
-    readonly_fields = ('created_at', 'updated_at')
-    
-    def get_team_desk_name(self, obj):
-        return obj.team_desk.name if obj.team_desk else 'N/A'
-    get_team_desk_name.short_description = 'Team/Desk'
-    get_team_desk_name.admin_order_field = 'team_desk__name'
-    
-    def get_organization_name(self, obj):
-        return obj.organization.name if obj.organization else 'N/A'
-    get_organization_name.short_description = 'Organization'
-    get_organization_name.admin_order_field = 'organization__name'
-    
-    def get_leo_eo_plan_name(self, obj):
-        return f"{obj.leo_eo_plan.organization.name} Plan" if obj.leo_eo_plan and obj.leo_eo_plan.organization else 'N/A'
-    get_leo_eo_plan_name.short_description = 'LEO/EO Plan'
-    get_leo_eo_plan_name.admin_order_field = 'leo_eo_plan__organization__name'
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'organization', 'team_desk', 'leo_eo_plan', 'leo_eo_plan__organization'
-        ).prefetch_related(
-            'objectives', 'initiatives', 'performance_measures', 'main_activities', 'detail_activities'
-        )
-
-@admin.register(TeamDeskPlanReview)
-class TeamDeskPlanReviewAdmin(admin.ModelAdmin):
-    list_display = ('get_plan_info', 'get_reviewer_name', 'status', 'reviewed_at')
-    list_filter = ('status', 'reviewed_at', 'plan__organization')
-    search_fields = ('plan__team_desk__name', 'reviewer__user__username', 'plan__organization__name')
-    fieldsets = (
-        (None, {
-            'fields': ('plan', 'reviewer', 'status')
-        }),
-        ('Review Content', {
-            'fields': ('feedback',),
-        }),
-        ('Timestamps', {
-            'fields': ('reviewed_at',),
-            'classes': ('collapse',),
-        }),
-    )
-    raw_id_fields = ('plan', 'reviewer')
-    readonly_fields = ('reviewed_at',)
-    
-    def get_plan_info(self, obj):
-        if obj.plan and obj.plan.team_desk:
-            return f"{obj.plan.team_desk.name} ({obj.plan.organization.name})"
-        return 'N/A'
-    get_plan_info.short_description = 'Plan'
-    get_plan_info.admin_order_field = 'plan__team_desk__name'
-    
-    def get_reviewer_name(self, obj):
-        if obj.reviewer and obj.reviewer.user:
-            return obj.reviewer.user.get_full_name() or obj.reviewer.user.username
-        return 'N/A'
-    get_reviewer_name.short_description = 'Reviewer'
-    get_reviewer_name.admin_order_field = 'reviewer__user__username'
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'plan', 'plan__organization', 'plan__team_desk', 'reviewer', 'reviewer__user'
-        )
-@admin.register(DetailActivity)
-class DetailActivityAdmin(admin.ModelAdmin):
-    list_display = ('name', 'main_activity', 'weight', 'organization', 'target_type', 'annual_target', 'created_at')
-    list_filter = ('target_type', 'organization', 'main_activity__initiative')
-    search_fields = ('name', 'main_activity__name', 'organization__name')
-    fieldsets = (
-        (None, {
-            'fields': ('main_activity', 'name', 'weight', 'organization')
-        }),
-        ('Period', {
-            'fields': ('selected_months', 'selected_quarters'),
-        }),
-        ('Targets', {
-            'fields': ('baseline', 'target_type', 'q1_target', 'q2_target', 'q3_target', 'q4_target', 'annual_target'),
-        }),
-    )
-    raw_id_fields = ('main_activity', 'organization')
-    readonly_fields = ('created_at', 'updated_at')
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('main_activity', 'organization')
-    list_display = ('plan', 'reviewer', 'status', 'reviewed_at')
-    list_filter = ('status', 'reviewed_at')
-    search_fields = ('plan__team_desk__name', 'reviewer__user__username')
-    list_display = ('name', 'main_activity', 'weight', 'organization', 'created_at', 'updated_at')
-    list_filter = ('target_type', 'organization', 'main_activity__initiative')
-    search_fields = ('name', 'main_activity__name')
-    fieldsets = (
-        (None, {
-            'fields': ('main_activity', 'name', 'weight', 'organization')
-        }),
-        ('Period', {
-            'fields': ('selected_months', 'selected_quarters'),
-        }),
-        ('Targets', {
-            'fields': ('baseline', 'target_type', 'q1_target', 'q2_target', 'q3_target', 'q4_target', 'annual_target'),
         }),
     )
