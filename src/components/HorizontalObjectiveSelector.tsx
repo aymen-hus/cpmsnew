@@ -373,11 +373,7 @@ const HorizontalObjectiveSelector: React.FC<HorizontalObjectiveSelectorProps> = 
         </p>
         <button
           onClick={handleRetryLoading}
-          className="px-4 py-2 bg-white border border-red-300 rounded-md text-red-700 hover:bg-red-50 inline-flex items-center"
-          className={cn(
-            "bg-white p-5 rounded-lg border-2 transition-colors cursor-pointer",
-            isSelected ? "border-green-500 shadow-md" : "border-gray-200 hover:border-blue-300"
-          )}
+         className="px-4 py-2 bg-white border border-red-300 rounded-md text-red-700 hover:bg-red-50 inline-flex items-center"
         >
           <RefreshCw className="h-4 w-4 mr-2" />
           Try Again
