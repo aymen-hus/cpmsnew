@@ -17,14 +17,14 @@ interface MainActivityListProps {
   initiativeId: string;
   initiative_weight: number;
   onEditActivity: (activity: MainActivity) => void;
-  onDeleteActivity: (activityId: string) => void;
+  // onDeleteActivity: (activityId: string) => void;
 }
 
 const MainActivityList: React.FC<MainActivityListProps> = ({ 
   initiativeId, 
   initiative_weight,
   onEditActivity,
-  onDeleteActivity
+  // onDeleteActivity
 }) => {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
@@ -77,7 +77,53 @@ const MainActivityList: React.FC<MainActivityListProps> = ({
   });
   console.log('Initiative Weight:', initiative_weight);
   console.log('Weight Summary:', weightSummary?.data);
+  // ADDED: Delete mutation with optimistic updates
+  const deleteActivityMutation = useMutation({
+    mutationFn: (activityId: string) => mainActivities.delete(activityId),
+    onMutate: async (activityId) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ 
+        queryKey: ['main-activities', initiativeId] 
+      });
 
+      // Snapshot the previous value
+      const previousActivities = queryClient.getQueryData<{ data: MainActivity[] }>(
+        ['main-activities', initiativeId]
+      );
+
+      // Optimistically update to remove the activity
+      if (previousActivities) {
+        queryClient.setQueryData(
+          ['main-activities', initiativeId],
+          {
+            ...previousActivities,
+            data: previousActivities.data.filter(activity => activity.id !== activityId)
+          }
+        );
+      }
+
+      return { previousActivities };
+    },
+    onError: (err, activityId, context) => {
+      console.error('Failed to delete activity:', err);
+      // Rollback to previous state on error
+      if (context?.previousActivities) {
+        queryClient.setQueryData(
+          ['main-activities', initiativeId],
+          context.previousActivities
+        );
+      }
+    },
+    onSettled: () => {
+      // Always refetch after error or success
+      queryClient.invalidateQueries({ 
+        queryKey: ['main-activities', initiativeId] 
+      });
+      queryClient.invalidateQueries({ 
+        queryKey: ['main-activities', 'weight-summary', initiativeId] 
+      });
+    }
+  });
 const validateActivitiesMutation = useMutation({
     mutationFn: () => mainActivities.validateActivitiesWeight(initiativeId),
     
@@ -597,17 +643,22 @@ const validateActivitiesMutation = useMutation({
                 >
                   <Edit className="h-4 w-4" />
                 </button>
-                <button
-                      className="p-1 text-red-600 hover:text-red-800"
-                      onClick={(e) => {
-                        e.stopPropagation(); // Prevent bubbling up to parent elements
-                        if (window.confirm('Are you sure you want to delete this activity? This action cannot be undone.')) {
-                          onDeleteActivity(activity.id);
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                 <button
+                className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm('Are you sure you want to delete this activity? This action cannot be undone.')) {
+                    deleteActivityMutation.mutate(activity.id);
+                  }
+                }}
+                disabled={deleteActivityMutation.isPending}
+              >
+                {deleteActivityMutation.isPending ? (
+                  <Loader className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+              </button>
                 {!activity.budget && (
                   <button
                     onClick={() => handleActivitySelect(activity)}
