@@ -183,8 +183,40 @@ const validateActivitiesMutation = useMutation({
     setShowBudgetPreview(false);
     setIsProcessing(false); // Reset processing state
     
-    // If activity already has a budget, go straight to the budget form
-    if (hasExistingBudget) {
+    // If activity already has a budget with WITH_TOOL calculation type, show the costing tool first
+    if (hasExistingBudget && existingBudgetType === 'WITH_TOOL' && existingActivityType) {
+      // Show the appropriate costing tool based on activity type
+      setShowBudgetForm(false);
+      setShowBudgetTypeModal(false);
+      
+      switch (existingActivityType) {
+        case 'Training':
+          setShowTrainingTool(true);
+          break;
+        case 'Meeting':
+        case 'Workshop':
+          setShowMeetingWorkshopTool(true);
+          break;
+        case 'Printing':
+          setShowPrintingTool(true);
+          break;
+        case 'Procurement':
+          setShowProcurementTool(true);
+          break;
+        case 'Supervision':
+          setShowSupervisionTool(true);
+          break;
+        case 'Other':
+          // For 'Other', go directly to budget form since there's no costing tool
+          setShowBudgetForm(true);
+          break;
+        default:
+          // Fallback to budget form if activity type is unknown
+          setShowBudgetForm(true);
+          break;
+      }
+    } else if (hasExistingBudget) {
+      // If activity has budget but was created WITHOUT_TOOL, go straight to budget form
       setShowBudgetForm(true);
       setShowBudgetTypeModal(false);
     } else {
