@@ -125,26 +125,19 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
     }
   }, [initialRender, budgetCalculationType, withToolCost, withoutToolCost, initialData, setValue]);
 
-  // FIXED: Initialize partners properly from initialData
+  // Initialize partners if they exist in the initial data
   useEffect(() => {
     if (initialData?.partners_list && Array.isArray(initialData.partners_list)) {
       setPartners(initialData.partners_list);
-    } else if (!initialData) {
-      // Only set default partners when creating new budget
+    } else {
+      // Set default partners if none exist
       setPartners([
         { name: 'WHO', amount: 0 },
         { name: 'UNICEF', amount: 0 },
         { name: 'USAID', amount: 0 }
       ]);
     }
-    // If initialData exists but has no partners_list, leave partners as empty array
   }, [initialData]);
-
-  // FIXED: Update partners_funding field whenever partners change
-  useEffect(() => {
-    const total = partners.reduce((sum, p) => sum + (p.amount || 0), 0);
-    setValue('partners_funding', total);
-  }, [partners, setValue]);
 
   // Calculate totals
   // Make sure we have valid numeric values
