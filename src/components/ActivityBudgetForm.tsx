@@ -127,8 +127,13 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
 
   // Initialize partners if they exist in the initial data
   useEffect(() => {
-    if (initialData?.partners_list && Array.isArray(initialData.partners_list)) {
+    if (initialData?.partners_list && Array.isArray(initialData.partners_list) && initialData.partners_list.length > 0) {
       setPartners(initialData.partners_list);
+    } else if (initialData?.partners_funding && Number(initialData.partners_funding) > 0) {
+      // If we have partners_funding but no partners_list, create a default entry
+      setPartners([
+        { name: 'Partners Funding', amount: Number(initialData.partners_funding) }
+      ]);
     } else {
       // Set default partners if none exist
       setPartners([
@@ -217,6 +222,9 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
       // Update the partners funding field
       data.partners_funding = totalPartnersFunding;
       
+      // Store the partners list in the budget data
+      budgetData.partners_list = partners;
+      
       // Validate total funding against estimated cost
       const updatedTotalFunding = Number(data.government_treasury || 0) +
                                 Number(data.sdg_funding || 0) +
@@ -242,7 +250,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
         government_treasury: Number(data.government_treasury),
         sdg_funding: Number(data.sdg_funding),
         partners_funding: Number(data.partners_funding),
-        partners_list: partners,  // Store the partners list
+        partners_list: partners.filter(p => p.name && p.amount > 0),  // Store only valid partners
         other_funding: Number(data.other_funding),
         
         // Make sure we preserve any existing tool-specific details
