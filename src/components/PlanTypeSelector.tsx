@@ -37,8 +37,13 @@ const PlanTypeSelector: React.FC<PlanTypeSelectorProps> = ({ onSelectPlanType })
         {/* Desk/Team Plan - Coming Soon */}
         <div 
           onClick={() => onSelectPlanType('Desk/Team Plan')}
-          className="bg-white p-6 rounded-lg border-2 border-blue-200 hover:border-blue-500 shadow-sm cursor-pointer transition-colors flex flex-col items-center text-center"
+          className="bg-gray-50 p-6 rounded-lg border-2 border-gray-200 shadow-sm flex flex-col items-center text-center relative"
         >
+          <div className="absolute inset-0 bg-white bg-opacity-50 flex items-center justify-center z-10">
+            <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+              Coming Soon
+            </span>
+          </div>
           <div className="bg-blue-100 p-4 rounded-full mb-4">
             <Users className="h-8 w-8 text-blue-600" />
           </div>
