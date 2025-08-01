@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileSpreadsheet, File as FilePdf, Send, Loader, Building2, Calendar, User, DollarSign, Users, Target, Activity, AlertCircle, FileType, Info, RefreshCw, Globe } from 'lucide-react';
-import { exportToExcel, exportToPDF } from '../lib/utils/export';
-import { processDataForExport, formatCurrency } from '../lib/utils/export';
-import type { StrategicObjective, StrategicInitiative } from '../types/organization';
-import { MONTHS } from '../types/plan';
-import { auth } from '../lib/api';
 import { useLanguage } from '../lib/i18n/LanguageContext';
+import { BarChart3, Target, Activity, DollarSign, Calendar, User, Building2, FileType, CheckCircle, AlertCircle, Info, Loader } from 'lucide-react';
+import { StrategicObjective } from '../types/organization';
+import { PlanType } from '../types/plan';
+import { formatCurrency, processDataForExport } from '../lib/utils/export';
+import { initiatives, performanceMeasures, mainActivities, auth } from '../lib/api';
 
 interface PlanReviewTableProps {
   objectives: StrategicObjective[];
@@ -15,61 +14,40 @@ interface PlanReviewTableProps {
   plannerName: string;
   fromDate: string;
   toDate: string;
-  planType?: string;
+  planType: PlanType;
   isPreviewMode?: boolean;
-  userOrgId?: number | null; // Added prop to pass user organization ID
+  userOrgId?: number | null;
   isViewOnly?: boolean;
 }
 
-const PlanReviewTable: React.FC<PlanReviewTableProps> = ({ 
-  objectives, 
+const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
+  objectives,
   onSubmit,
   isSubmitting,
   organizationName,
   plannerName,
   fromDate,
   toDate,
-  planType = 'TEAM_DESK',
+  planType,
   isPreviewMode = false,
-  userOrgId: propUserOrgId = null, // Use prop if provided
-  isViewOnly = false,
+  userOrgId = null,
+  isViewOnly = false
 }) => {
-  const { language, t } = useLanguage();
-  const [isDataLoaded, setIsDataLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [budgetTotals, setBudgetTotals] = useState({
-    total: 0,
-    government: 0,
-    sdg: 0,
-    partners: 0,
-    other: 0,
-    available: 0,
-    gap: 0
-  });
-  const [userOrgId, setUserOrgId] = useState<number | null>(propUserOrgId);
+  const { t } = useLanguage();
   const [processedObjectives, setProcessedObjectives] = useState<StrategicObjective[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentUserOrgId, setCurrentUserOrgId] = useState<number | null>(userOrgId);
 
-  useEffect(() => {
-    setIsDataLoaded(false);
-    setError(null);
-  }, []);
-
-  // Fetch current user's organization ID if not provided via props
+  // Fetch current user's organization ID if not provided
   useEffect(() => {
     const fetchUserData = async () => {
-      if (propUserOrgId !== null) {
-        console.log('Using provided user organization ID:', propUserOrgId);
-        setUserOrgId(propUserOrgId);
-        return;
-      }
+      if (currentUserOrgId !== null) return;
       
       try {
-        console.log('Fetching user organization ID...');
         const authData = await auth.getCurrentUser();
         if (authData.userOrganizations && authData.userOrganizations.length > 0) {
-          const orgId = authData.userOrganizations[0].organization;
-          console.log('Fetched user organization ID:', orgId);
-          setUserOrgId(orgId);
+          setCurrentUserOrgId(authData.userOrganizations[0].organization);
         }
       } catch (error) {
         console.error('Failed to fetch user data:', error);
@@ -77,1004 +55,745 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     };
     
     fetchUserData();
-  }, [propUserOrgId]);
+  }, [currentUserOrgId]);
 
-  // Process objectives when they change to ensure we're filtering based on user's organization
-  useEffect(() => {
-    if (!objectives || !userOrgId) {
-      setProcessedObjectives([]);
-      setIsDataLoaded(true);
-      return;
+  // Comprehensive data fetching function
+  const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
+    if (!currentUserOrgId || !objectivesList.length) {
+      return objectivesList;
     }
-    
-    console.log('Processing objectives for review table:', objectives.length);
-    console.log('Using organization ID for filtering:', userOrgId);
-    
+
     try {
-      // Deep clone to avoid modifying original data
-      const cloned = JSON.parse(JSON.stringify(objectives));
+      console.log('PlanReviewTable: Fetching complete data for objectives:', objectivesList.length);
       
-      // Process each objective to filter initiatives, measures, and activities
-      const processed = cloned.map((objective: any) => {
-        if (!objective) return objective;
-
-        const isCustomObjective = objective.is_default === false;
-        console.log(`Processing objective ${objective.title} (Custom: ${isCustomObjective})`);
-        
-        // Ensure effective weight is set correctly
-        if (objective.planner_weight !== undefined && objective.planner_weight !== null) {
-          objective.effective_weight = objective.planner_weight;
-        } else {
-          objective.effective_weight = objective.weight;
-        }
-        
-        console.log(`Objective ${objective.title} - Weight: ${objective.weight}, Planner Weight: ${objective.planner_weight}, Effective Weight: ${objective.effective_weight}`);
-        
-        // Get all initiatives for this objective
-        const initiatives = Array.isArray(objective.initiatives) 
-          ? [...objective.initiatives] 
-          : [];
-          
-        console.log(`Objective has ${initiatives.length} initiatives before filtering`);
-        
-        // Filter initiatives based on ownership
-        // For custom objectives, include all initiatives
-        // For default objectives, only include default initiatives or those belonging to the user's organization
-        const filteredInitiatives = initiatives.filter(initiative => {
-          if (isCustomObjective) {
-            // For custom objectives, include all initiatives
-            return true;
-          }
-          
-          // For default objectives, only include default ones or those from user's organization
-          return initiative.is_default || 
-                 !initiative.organization || 
-                 initiative.organization === userOrgId;
-        }).map(initiative => {
-          if (!initiative) return initiative;
-          
-          console.log(`Processing initiative ${initiative.name}`);
-          
-          // Get all measures and activities for this initiative
-          const measures = Array.isArray(initiative.performance_measures)
-            ? [...initiative.performance_measures]
-            : [];
-            
-          const activities = Array.isArray(initiative.main_activities)
-            ? [...initiative.main_activities]
-            : [];
-            
-          console.log(`Initiative has ${measures.length} measures and ${activities.length} activities before filtering`);
-          
-          // Filter measures and activities based on ownership
-          const filteredMeasures = measures.filter(measure => 
-            !measure.organization || measure.organization === userOrgId
-          );
-          
-          const filteredActivities = activities.filter(activity =>
-            !activity.organization || activity.organization === userOrgId
-          );
-          
-          console.log(`After filtering: ${filteredMeasures.length} measures and ${filteredActivities.length} activities`);
-          
-          return {
-            ...initiative,
-            performance_measures: filteredMeasures,
-            main_activities: filteredActivities
-          };
-        });
-        
-        console.log(`Objective has ${filteredInitiatives.length} initiatives after filtering`);
-        
-        return {
-          ...objective,
-          initiatives: filteredInitiatives
-        };
-      });
-      
-      console.log('Processed objectives for review table:', processed.length);
-      setProcessedObjectives(processed);
-    } catch (error) {
-      console.error('Error processing objectives:', error);
-      setError('Error processing plan data');
-      setProcessedObjectives([]);
-    }
-  }, [objectives, userOrgId]);
-
-  // Convert plan type to display text
-  const getPlanTypeDisplay = (type: string) => {
-    // No need to convert - using display name directly
-    return type;
-  };
-
-  const getEffectiveWeight = (objective: any): number => {
-    // Use planner_weight if available, otherwise use weight
-    return objective.planner_weight !== undefined && objective.planner_weight !== null
-      ? Number(objective.planner_weight)
-      : Number(objective.weight || 0);
-  };
-
-  // Check if data is properly loaded with initiatives, measures and activities
-  useEffect(() => {
-    const checkDataCompleteness = () => {
-      if (!processedObjectives || !Array.isArray(processedObjectives)) {
-        console.log('No processed objectives available');
-        setIsDataLoaded(false);
-        return;
-      }
-
-      if (processedObjectives.length === 0) {
-        console.log('Processed objectives array is empty');
-        setIsDataLoaded(true); // Set as loaded even if empty
-        return;
-      }
-      
-      // Check if objectives have complete data
-      const hasCompleteData = processedObjectives.every(objective => {
-        // Check if objective has initiatives property and it's an array
-        if (!objective || !objective.initiatives || !Array.isArray(objective.initiatives)) {
-          console.log('Objective missing initiatives or not an array:', objective?.id);
-          return false;
-        }
-        
-        // It's okay if an objective has no initiatives
-        if (objective.initiatives.length === 0) {
-          return true;
-        }
-        
-        // Check each initiative
-        return objective.initiatives.every(initiative => {
-          // Skip validation if initiative is invalid
-          if (!initiative) return true;
-          
-          // Check if initiative has performance_measures and main_activities as arrays
-          const hasMeasures = Array.isArray(initiative.performance_measures);
-          const hasActivities = Array.isArray(initiative.main_activities);
-          
-          if (!hasMeasures || !hasActivities) {
-            console.log('Initiative missing measures or activities arrays:', initiative.id);
-          }
-          
-          return hasMeasures && hasActivities;
-        });
-      });
-      
-      console.log('Data completeness check result:', hasCompleteData);
-      setIsDataLoaded(true);
-    };
-    
-    checkDataCompleteness();
-  }, [processedObjectives]);
-
-  // Calculate budget totals when objectives change
-  useEffect(() => {
-    if (processedObjectives && processedObjectives.length > 0) {
-      const totals = calculateTotalBudget();
-      setBudgetTotals(totals);
-    }
-  }, [processedObjectives, userOrgId]);
-
-  const handleExportExcel = async () => {
-    const data = processDataForExport(processedObjectives, language);
-    await exportToExcel(
-      data, 
-      `plan-${new Date().toISOString()}`, 
-      language,
-      {
-        organization: organizationName,
-        planner: plannerName,
-        fromDate: fromDate,
-        toDate: toDate,
-        planType: getPlanTypeDisplay(planType)
-      }
-    );
-  };
-  
-  const handleExportExcelAmharic = async () => {
-    const data = processDataForExport(processedObjectives, 'am');
-    await exportToExcel(
-      data, 
-      `plan-amharic-${new Date().toISOString()}`, 
-      'am',
-      {
-        organization: organizationName,
-        planner: plannerName,
-        fromDate: fromDate,
-        toDate: toDate,
-        planType: getPlanTypeDisplay(planType)
-      }
-    );
-  };
-
-  const handleExportPDF = async () => {
-    const data = processDataForExport(processedObjectives, language);
-    await exportToPDF(
-      data, 
-      `plan-${new Date().toISOString()}`, 
-      language,
-      {
-        organization: organizationName,
-        planner: plannerName,
-        fromDate: fromDate,
-        toDate: toDate,
-        planType: getPlanTypeDisplay(planType)
-      }
-    );
-  };
-
-  // Calculate total budget across all objectives
-  const calculateTotalBudget = () => {
-    let total = 0;
-    let government = 0;
-    let sdg = 0;
-    let partners = 0;
-    let other = 0;
-    let available = 0;
-    let gap = 0;
-
-    if (!processedObjectives || !Array.isArray(processedObjectives)) {
-      return { total, government, sdg, partners, other, available, gap };
-    }
-
-    processedObjectives.forEach(objective => {
-      if (!objective || !objective.initiatives || !Array.isArray(objective.initiatives)) {
-        return;
-      }
-
-      objective.initiatives.forEach(initiative => {
-        if (!initiative || !initiative.main_activities || !Array.isArray(initiative.main_activities)) {
-          return;
-        }
-
-        initiative.main_activities.forEach(activity => {
-          if (!activity || !activity.budget) {
-            return;
-          }
-          
+      const enrichedObjectives = await Promise.all(
+        objectivesList.map(async (objective) => {
           try {
-            const cost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
-              ? Number(activity.budget.estimated_cost_with_tool || 0) 
-              : Number(activity.budget.estimated_cost_without_tool || 0);
+            // Fetch ALL initiatives for this objective using multiple approaches
+            console.log(`PlanReviewTable: Fetching ALL initiatives for objective ${objective.id} (${objective.title})`);
             
-            total += cost;
-            government += Number(activity.budget.government_treasury || 0);
-            sdg += Number(activity.budget.sdg_funding || 0);
-            partners += Number(activity.budget.partners_funding || 0);
-            other += Number(activity.budget.other_funding || 0);
+            // Method 1: Direct objective initiatives
+            const directInitiativesResponse = await initiatives.getByObjective(objective.id.toString());
+            let allObjectiveInitiatives = directInitiativesResponse?.data || [];
+            console.log(`PlanReviewTable: Found ${allObjectiveInitiatives.length} direct initiatives for objective ${objective.id}`);
             
-            // Calculate total available funding and gap
-            const activityAvailable = Number(activity.budget.government_treasury || 0) + 
-                                     Number(activity.budget.sdg_funding || 0) + 
-                                     Number(activity.budget.partners_funding || 0) + 
-                                     Number(activity.budget.other_funding || 0);
-            available += activityAvailable;
-            gap += Math.max(0, cost - activityAvailable);
-          } catch (e) {
-            console.error('Error processing activity budget:', e, activity);
+            // Method 2: Get all initiatives and filter by strategic_objective
+            try {
+              const allInitiativesResponse = await initiatives.getAll();
+              const allInitiatives = allInitiativesResponse?.data || [];
+              
+              // Filter initiatives that belong to this objective (either directly or through programs)
+              const objectiveRelatedInitiatives = allInitiatives.filter(initiative => {
+                // Direct objective relationship
+                if (initiative.strategic_objective && 
+                    initiative.strategic_objective.toString() === objective.id.toString()) {
+                  return true;
+                }
+                
+                // Program relationship - check if initiative's program belongs to this objective
+                if (initiative.program && objective.programs && Array.isArray(objective.programs)) {
+                  return objective.programs.some(program => 
+                    program.id.toString() === initiative.program.toString()
+                  );
+                }
+                
+                return false;
+              });
+              
+              console.log(`PlanReviewTable: Found ${objectiveRelatedInitiatives.length} related initiatives from all initiatives for objective ${objective.id}`);
+              
+              // Merge with direct initiatives, avoiding duplicates
+              objectiveRelatedInitiatives.forEach(relatedInitiative => {
+                if (!allObjectiveInitiatives.find(existing => existing.id === relatedInitiative.id)) {
+                  allObjectiveInitiatives.push(relatedInitiative);
+                }
+              });
+              
+            } catch (allInitiativesError) {
+              console.error('PlanReviewTable: Error fetching all initiatives:', allInitiativesError);
+            }
+            
+            // Method 3: Also check if the objective has programs and fetch initiatives for those programs
+            if (objective.programs && Array.isArray(objective.programs)) {
+              for (const program of objective.programs) {
+                try {
+                  console.log(`PlanReviewTable: Fetching initiatives for program ${program.id} under objective ${objective.id}`);
+                  const programInitiativesResponse = await initiatives.getByProgram(program.id.toString());
+                  const programInitiatives = programInitiativesResponse?.data || [];
+                  console.log(`PlanReviewTable: Found ${programInitiatives.length} initiatives for program ${program.id}`);
+                  
+                  // Add program initiatives to the list, avoiding duplicates
+                  programInitiatives.forEach(programInitiative => {
+                    if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
+                      allObjectiveInitiatives.push(programInitiative);
+                    }
+                  });
+                } catch (programError) {
+                  console.error(`PlanReviewTable: Error fetching initiatives for program ${program.id}:`, programError);
+                }
+              }
+            }
+            
+            console.log(`PlanReviewTable: TOTAL initiatives found for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
+
+            // Filter initiatives based on user organization
+            const filteredInitiatives = allObjectiveInitiatives.filter(initiative => 
+              initiative.is_default || 
+              !initiative.organization || 
+              initiative.organization === currentUserOrgId
+            );
+            
+            console.log(`PlanReviewTable: Filtered initiatives for user org ${currentUserOrgId}: ${filteredInitiatives.length} out of ${allObjectiveInitiatives.length}`);
+
+            // For each initiative, fetch performance measures and main activities
+            const enrichedInitiatives = await Promise.all(
+              filteredInitiatives.map(async (initiative) => {
+                try {
+                  console.log(`PlanReviewTable: Fetching data for initiative ${initiative.id} (${initiative.name})`);
+                  
+                  // Fetch performance measures
+                  const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+                  const allMeasures = measuresResponse?.data || [];
+                  console.log(`PlanReviewTable: Found ${allMeasures.length} measures for initiative ${initiative.id}`);
+                  
+                  // Filter measures by organization
+                  const filteredMeasures = allMeasures.filter(measure =>
+                    !measure.organization || measure.organization === currentUserOrgId
+                  );
+
+                  // Fetch main activities
+                  const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+                  const allActivities = activitiesResponse?.data || [];
+                  console.log(`PlanReviewTable: Found ${allActivities.length} activities for initiative ${initiative.id}`);
+                  
+                  // Filter activities by organization
+                  const filteredActivities = allActivities.filter(activity =>
+                    !activity.organization || activity.organization === currentUserOrgId
+                  );
+
+                  console.log(`PlanReviewTable: Initiative ${initiative.id} final data: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+
+                  return {
+                    ...initiative,
+                    performance_measures: filteredMeasures,
+                    main_activities: filteredActivities
+                  };
+                } catch (error) {
+                  console.error(`PlanReviewTable: Error fetching data for initiative ${initiative.id}:`, error);
+                  return {
+                    ...initiative,
+                    performance_measures: [],
+                    main_activities: []
+                  };
+                }
+              })
+            );
+
+            // Set effective weight correctly
+            const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+              ? objective.planner_weight
+              : objective.weight;
+
+            console.log(`PlanReviewTable: Objective ${objective.id} (${objective.title}) FINAL RESULT: ${enrichedInitiatives.length} initiatives with complete data`);
+            
+            // Log each initiative for debugging
+            enrichedInitiatives.forEach((init, index) => {
+              console.log(`PlanReviewTable:   Initiative ${index + 1}: ${init.name} (ID: ${init.id}) - Measures: ${init.performance_measures?.length || 0}, Activities: ${init.main_activities?.length || 0}`);
+            });
+
+            return {
+              ...objective,
+              effective_weight: effectiveWeight,
+              initiatives: enrichedInitiatives
+            };
+          } catch (error) {
+            console.error(`PlanReviewTable: Error processing objective ${objective.id}:`, error);
+            return {
+              ...objective,
+              effective_weight: objective.weight,
+              initiatives: []
+            };
           }
+        })
+      );
+
+      console.log('PlanReviewTable: === FINAL SUMMARY ===');
+      console.log('PlanReviewTable: Successfully enriched objectives with complete data:', 
+        enrichedObjectives.map(obj => ({
+          id: obj.id,
+          title: obj.title,
+          initiativesCount: obj.initiatives?.length || 0,
+          totalMeasures: obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0,
+          totalActivities: obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0
+        }))
+      );
+      
+      const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
+      console.log(`PlanReviewTable: GRAND TOTAL: ${totalInitiatives} initiatives across ${enrichedObjectives.length} objectives`);
+      
+      return enrichedObjectives;
+    } catch (error) {
+      console.error('PlanReviewTable: Error in fetchCompleteObjectiveData:', error);
+      throw error;
+    }
+  };
+
+  // Load and process objectives data when component mounts or objectives change
+  useEffect(() => {
+    const loadObjectivesData = async () => {
+      if (!currentUserOrgId) return;
+
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        console.log('PlanReviewTable: Loading objectives data...');
+        
+        // Fetch complete data for all objectives
+        const enrichedObjectives = await fetchCompleteObjectiveData(objectives);
+        
+        setProcessedObjectives(enrichedObjectives);
+        console.log('PlanReviewTable: Processed objectives updated:', enrichedObjectives.length);
+      } catch (error) {
+        console.error('PlanReviewTable: Error loading objectives data:', error);
+        setError('Failed to load complete plan data');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadObjectivesData();
+  }, [objectives, currentUserOrgId]);
+
+  // Helper function to format dates
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleDateString();
+    } catch (e) {
+      return dateString;
+    }
+  };
+
+  // Helper function to calculate 6-month and 9-month targets
+  const calculateTargets = (item: any) => {
+    if (!item) return { sixMonth: 0, nineMonth: 0 };
+    
+    const targetType = item.target_type || 'cumulative';
+    const q1 = Number(item.q1_target) || 0;
+    const q2 = Number(item.q2_target) || 0;
+    const q3 = Number(item.q3_target) || 0;
+    
+    if (targetType === 'cumulative') {
+      return {
+        sixMonth: q1 + q2,
+        nineMonth: q1 + q2 + q3
+      };
+    } else {
+      return {
+        sixMonth: q2,
+        nineMonth: q3
+      };
+    }
+  };
+
+  // Helper function to get budget information
+  const getBudgetInfo = (activity: any) => {
+    if (!activity?.budget) {
+      return {
+        required: 0,
+        government: 0,
+        partners: 0,
+        sdg: 0,
+        other: 0,
+        total: 0,
+        gap: 0
+      };
+    }
+
+    const budget = activity.budget;
+    const required = budget.budget_calculation_type === 'WITH_TOOL' 
+      ? Number(budget.estimated_cost_with_tool || 0)
+      : Number(budget.estimated_cost_without_tool || 0);
+    
+    const government = Number(budget.government_treasury || 0);
+    const partners = Number(budget.partners_funding || 0);
+    const sdg = Number(budget.sdg_funding || 0);
+    const other = Number(budget.other_funding || 0);
+    const total = government + partners + sdg + other;
+    const gap = Math.max(0, required - total);
+
+    return { required, government, partners, sdg, other, total, gap };
+  };
+
+  // Calculate totals for the entire plan
+  const calculatePlanTotals = () => {
+    let totalRequired = 0;
+    let totalGovernment = 0;
+    let totalPartners = 0;
+    let totalSDG = 0;
+    let totalOther = 0;
+    let totalAvailable = 0;
+    let totalGap = 0;
+
+    processedObjectives.forEach(objective => {
+      objective.initiatives?.forEach(initiative => {
+        initiative.main_activities?.forEach(activity => {
+          const budget = getBudgetInfo(activity);
+          totalRequired += budget.required;
+          totalGovernment += budget.government;
+          totalPartners += budget.partners;
+          totalSDG += budget.sdg;
+          totalOther += budget.other;
+          totalAvailable += budget.total;
+          totalGap += budget.gap;
         });
       });
     });
 
-    return { total, government, sdg, partners, other, available, gap };
+    return {
+      totalRequired,
+      totalGovernment,
+      totalPartners,
+      totalSDG,
+      totalOther,
+      totalAvailable,
+      totalGap
+    };
   };
 
-  // Count total activities and measures across all objectives
-  const countItems = () => {
-    let activities = 0;
-    let measures = 0;
-    
-    if (!processedObjectives || !Array.isArray(processedObjectives)) {
-      return { activities: 0, measures: 0 };
-    }
-    
-    processedObjectives.forEach(objective => {
-      if (!objective || !objective.initiatives || !Array.isArray(objective.initiatives)) {
-        return;
-      }
+  const planTotals = calculatePlanTotals();
 
-      objective.initiatives.forEach(initiative => {
-        if (!initiative) return;
-        
-        if (initiative.performance_measures && Array.isArray(initiative.performance_measures)) {
-          measures += initiative.performance_measures.length;
-        }
-        
-        if (initiative.main_activities && Array.isArray(initiative.main_activities)) {
-          activities += initiative.main_activities.length;
-        }
-      });
-    });
-    
-    return { activities, measures };
-  };
-  
-  const totals = countItems();
+  if (isLoading) {
+    return (
+      <div className="p-12 text-center">
+        <Loader className="h-10 w-10 mx-auto text-green-500 animate-spin" />
+        <p className="mt-4 text-gray-600 text-lg">Loading complete plan data...</p>
+        <p className="mt-2 text-sm text-gray-500">
+          Fetching objectives, initiatives, performance measures, and activities...
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 text-center">
+        <div className="rounded-full bg-red-100 p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+          <AlertCircle className="h-8 w-8 text-red-500" />
+        </div>
+        <h3 className="text-lg font-medium text-red-800 mb-2">Error Loading Plan Data</h3>
+        <p className="text-red-600">{error}</p>
+      </div>
+    );
+  }
+
+  if (!processedObjectives || processedObjectives.length === 0) {
+    return (
+      <div className="p-8 text-center bg-yellow-50 rounded-lg border border-yellow-200">
+        <Info className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-yellow-800 mb-2">No Complete Data Available</h3>
+        <p className="text-yellow-700 mb-4">
+          {objectives.length === 0 
+            ? "No objectives were found for this plan. Make sure you've selected at least one objective."
+            : "The objectives exist but don't have complete data (initiatives, measures, or activities). Please add content to your plan first."
+          }
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Action Buttons */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Plan Summary</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Review your plan details before submission
-          </p>
-        </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={handleExportExcel}
-            className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <FileSpreadsheet className="h-4 w-4 mr-2" />
-            Export Excel
-          </button>
-          <button
-            onClick={handleExportExcelAmharic}
-            className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <Globe className="h-4 w-4 mr-2" />
-            Export Excel (አማርኛ)
-          </button>
-          {/* <button
-            onClick={handleExportPDF}
-            className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <FilePdf className="h-4 w-4 mr-2" />
-            Export PDF
-          </button> */}
-          {!isPreviewMode && (
-            <button
-              onClick={onSubmit}
-              disabled={isSubmitting || !isDataLoaded || processedObjectives.length === 0}
-              className="flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader className="h-4 w-4 mr-2 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4 mr-2" />
-                  Submit for Review
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Error message when objectives are missing */}
-      {(!processedObjectives || !Array.isArray(processedObjectives) || processedObjectives.length === 0) && isDataLoaded && (
-        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-700 text-center">
-          <p className="font-medium mb-2">No objectives selected</p>
-          <p className="text-sm">Please select at least one strategic objective before submitting your plan.</p>
-        </div>
-      )}
-
-      {/* Error message when data is incomplete */}
-      {processedObjectives && processedObjectives.length > 0 && !isDataLoaded && (
-        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-700">
-          <p className="font-medium mb-2">Incomplete plan data</p>
-          <p className="text-sm">Some objectives may be missing initiatives, performance measures, or activities. Please ensure all required data is complete.</p>
-        </div>
-      )}
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium text-gray-500">Total Objectives</h3>
-          <p className="mt-2 text-3xl font-semibold text-gray-900">
-            {processedObjectives?.length || 0}
-          </p>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium text-gray-500">Total Initiatives</h3>
-          <p className="mt-2 text-3xl font-semibold text-gray-900">
-            {processedObjectives?.length || 0}
-          </p>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium text-gray-500">Total Activities</h3>
-          <p className="mt-2 text-3xl font-semibold text-gray-900">
-            {totals.activities}
-          </p>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-medium text-gray-500">Total Measures</h3>
-          <p className="mt-2 text-3xl font-semibold text-gray-900">
-            {totals.measures}
-          </p>
-        </div>
-
-        {!isPreviewMode && !isViewOnly && (
-          <div className="bg-white p-4 rounded-lg border border-gray-200">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-medium text-gray-500">Total Budget</h3>
-              <DollarSign className="h-4 w-4 text-green-500" />
-            </div>
-            <p className="mt-2 text-3xl font-semibold text-green-600">${budgetTotals.total.toLocaleString()}</p>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-              <div className="flex justify-between">
-                <span>Government:</span>
-                <span className="font-medium text-gray-900">${budgetTotals.government.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Partners:</span>
-                <span className="font-medium text-gray-900">${budgetTotals.partners.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>SDG:</span>
-                <span className="font-medium text-gray-900">${budgetTotals.sdg.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Other:</span>
-                <span className="font-medium text-gray-900">${budgetTotals.other.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Available:</span>
-                <span className="font-medium text-blue-600">${budgetTotals.available.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Gap:</span>
-                <span className="font-medium text-red-600">${budgetTotals.gap.toLocaleString()}</span>
-              </div>
+      {/* Plan Header Information */}
+      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="flex items-center">
+            <Building2 className="h-5 w-5 text-gray-400 mr-2" />
+            <div>
+              <p className="text-sm text-gray-500">Organization</p>
+              <p className="font-medium">{organizationName}</p>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-6 mb-4">
-        <div className="flex items-center gap-2">
-          <Target className="h-4 w-4 text-blue-600" />
-          <span className="text-sm text-gray-600">Performance Measure</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-green-600" />
-          <span className="text-sm text-gray-600">Main Activity</span>
-        </div>
-      </div>
-
-      {/* Organization Info */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <span className="text-sm text-gray-500 flex items-center gap-1">
-              <Building2 className="h-4 w-4" /> Organization
-            </span>
-            <span className="font-medium">{organizationName}</span>
+          <div className="flex items-center">
+            <User className="h-5 w-5 text-gray-400 mr-2" />
+            <div>
+              <p className="text-sm text-gray-500">Planner</p>
+              <p className="font-medium">{plannerName}</p>
+            </div>
           </div>
-          <div>
-            <span className="text-sm text-gray-500 flex items-center gap-1">
-              <User className="h-4 w-4" /> Planner
-            </span>
-            <span className="font-medium">{plannerName}</span>
+          <div className="flex items-center">
+            <FileType className="h-5 w-5 text-gray-400 mr-2" />
+            <div>
+              <p className="text-sm text-gray-500">Plan Type</p>
+              <p className="font-medium">{planType}</p>
+            </div>
           </div>
-          <div>
-            <span className="text-sm text-gray-500 flex items-center gap-1">
-              <Calendar className="h-4 w-4" /> Period
-            </span>
-            <span className="font-medium">{fromDate} to {toDate}</span>
-          </div>
-          <div>
-            <span className="text-sm text-gray-500 flex items-center gap-1">
-              <FileType className="h-4 w-4" /> Type
-            </span>
-            <span className="font-medium">{getPlanTypeDisplay(planType)}</span>
+          <div className="flex items-center">
+            <Calendar className="h-5 w-5 text-gray-400 mr-2" />
+            <div>
+              <p className="text-sm text-gray-500">Period</p>
+              <p className="font-medium">{formatDate(fromDate)} - {formatDate(toDate)}</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Error message when objectives are missing */}
-      {(!processedObjectives || !Array.isArray(processedObjectives) || processedObjectives.length === 0) && (
-        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-700 text-center">
-          <p className="font-medium mb-2">No objectives found</p>
-          <p className="text-sm">Please ensure objectives are properly selected and configured.</p>
+      {/* Plan Summary Statistics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Objectives</p>
+              <p className="text-2xl font-semibold text-blue-600">{processedObjectives.length}</p>
+            </div>
+            <Target className="h-8 w-8 text-blue-500" />
+          </div>
         </div>
-      )}
-      
-      {/* Detailed Table - Only show if we have objectives */}
-      {processedObjectives && Array.isArray(processedObjectives) && processedObjectives.length > 0 && (
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Initiatives</p>
+              <p className="text-2xl font-semibold text-green-600">
+                {processedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0)}
+              </p>
+            </div>
+            <BarChart3 className="h-8 w-8 text-green-500" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Activities</p>
+              <p className="text-2xl font-semibold text-purple-600">
+                {processedObjectives.reduce((sum, obj) => 
+                  sum + (obj.initiatives?.reduce((initSum, init) => 
+                    initSum + (init.main_activities?.length || 0), 0) || 0), 0)}
+              </p>
+            </div>
+            <Activity className="h-8 w-8 text-purple-500" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Total Budget</p>
+              <p className="text-2xl font-semibold text-green-600">
+                {formatCurrency(planTotals.totalRequired)}
+              </p>
+            </div>
+            <DollarSign className="h-8 w-8 text-green-500" />
+          </div>
+        </div>
+      </div>
+
+      {/* Detailed Plan Table */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 border-collapse [&_th]:border [&_td]:border table-fixed">
+          <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="w-8 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  №
-                </th>
-                <th className="w-40 px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Strategic Objective
-                </th>
-                <th className="w-16 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Weight
-                </th>
-                <th className="w-40 px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Strategic Initiative
-                </th>
-                <th className="w-16 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Initiative Weight
-                </th>
-                <th className="w-40 px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Performance Measure/Main Activity
-                </th>
-                <th className="w-12 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Weight
-                </th>
-                <th className="w-16 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Baseline
-                </th>
-                <th className="w-14 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Q1
-                </th>
-                <th className="w-14 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Q2
-                </th>
-                <th className="w-16 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  6M
-                </th>
-                <th className="w-14 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Q3
-                </th>
-                <th className="w-14 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Q4
-                </th>
-                <th className="w-16 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Annual
-                </th>
-                <th className="w-24 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Implementor
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Budget Required
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Government
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Partners
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  SDG
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Other
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Total Available
-                </th>
-                <th className="w-20 px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border">
-                  Gap
-                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategic Objective</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Obj Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategic Initiative</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Init Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Performance Measure/Main Activity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Baseline</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q1</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q2</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">6-Month</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q3</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q4</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Annual</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Implementor</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget Required</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Government</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Partners</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SDG</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Other</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Available</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Gap</th>
               </tr>
             </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {processedObjectives.map((objective, objIndex) => {
-                  if (!objective) {
-                    return (
-                      <tr key={`empty-obj-${objIndex}`} className="bg-red-50">
-                        <td colSpan={23} className="px-6 py-4 text-center text-red-500">
-                          Invalid objective data - please check configuration
+            <tbody className="bg-white divide-y divide-gray-200">
+              {processedObjectives.map((objective, objIndex) => {
+                let rowNumber = 1;
+                const rows: JSX.Element[] = [];
+                
+                // Track if we've shown the objective info
+                let objectiveShown = false;
+                
+                if (!objective.initiatives || objective.initiatives.length === 0) {
+                  // Show objective without initiatives
+                  rows.push(
+                    <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
+                      <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objective.effective_weight || objective.weight}%</td>
+                      <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                    </tr>
+                  );
+                  objectiveShown = true;
+                }
+
+                objective.initiatives?.forEach((initiative, initIndex) => {
+                  // Track if we've shown the initiative info
+                  let initiativeShown = false;
+                  
+                  // Process performance measures
+                  initiative.performance_measures?.forEach((measure, measureIndex) => {
+                    const targets = calculateTargets(measure);
+                    
+                    rows.push(
+                      <tr key={`measure-${measure.id}`} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? objIndex + 1 : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {!objectiveShown ? objective.title : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {!initiativeShown ? initiative.name : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!initiativeShown ? `${initiative.weight}%` : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
+                            PM
+                          </span>
+                          {measure.name}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.weight}%</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.baseline || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q1_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q2_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{targets.sixMonth}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q3_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q4_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.annual_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!initiativeShown ? (initiative.organization_name || '-') : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      </tr>
+                    );
+                    
+                    objectiveShown = true;
+                    initiativeShown = true;
+                  });
+                  
+                  // Process main activities
+                  initiative.main_activities?.forEach((activity, activityIndex) => {
+                    const targets = calculateTargets(activity);
+                    const budget = getBudgetInfo(activity);
+                    
+                    rows.push(
+                      <tr key={`activity-${activity.id}`} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? objIndex + 1 : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {!objectiveShown ? objective.title : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {!initiativeShown ? initiative.name : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!initiativeShown ? `${initiative.weight}%` : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-2">
+                            MA
+                          </span>
+                          {activity.name}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.weight}%</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.baseline || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q1_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q2_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{targets.sixMonth}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q3_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q4_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.annual_target}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!initiativeShown ? (initiative.organization_name || '-') : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.required)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.government)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.partners)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.sdg)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.other)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.total)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <span className={`${budget.gap > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatCurrency(budget.gap)}
+                          </span>
                         </td>
                       </tr>
                     );
-                  }
-                  
-                  // Get effective weight - use planner_weight if available, otherwise use weight
-                  const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null 
-                    ? objective.planner_weight 
-                    : objective.weight;
-
-                  // Use already filtered initiatives from processed objectives
-                  const filteredInitiatives = Array.isArray(objective.initiatives) ? objective.initiatives : [];
-
-                  if (filteredInitiatives.length === 0) {
-                    return (
-                      <tr key={`obj-${objective.id || objIndex}`}>
-                        <td className="px-2 py-2 text-sm text-center text-gray-900 border">{objIndex + 1}</td>
-                        <td className="px-2 py-2 text-sm text-gray-900 border">{objective.title || 'Untitled Objective'}</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-900 border">{effectiveWeight}%</td>
-                        <td className="px-2 py-2 text-sm text-gray-500 border font-medium">No initiatives</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-gray-500 border font-medium">No initiatives</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                      </tr>
-                    );
-                  }
-                  
-                  // Create an array to hold all rows for this objective
-                  let tableRows: React.ReactNode[] = [];
-                  
-                  // Process each initiative
-                  filteredInitiatives.forEach((initiative, initIndex) => {
-                    if (!initiative) return;
                     
-                    const filteredMeasures = Array.isArray(initiative.performance_measures)
-                      ? initiative.performance_measures : [];
-                    
-                    const filteredActivities = Array.isArray(initiative.main_activities) 
-                      ? initiative.main_activities : [];
-                    
-                    // If no measures or activities, add an empty row for this initiative
-                    if (filteredMeasures.length === 0 && filteredActivities.length === 0) {
-                      tableRows.push(
-                        <tr key={`empty-init-${initIndex}-${initiative.id || 'unknown'}`}>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? (objIndex + 1) : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? objective.title || 'Untitled Objective' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? effectiveWeight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.name || 'Untitled Initiative' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.weight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm font-medium text-gray-900 border">
-                            {initiative.name || 'Untitled Initiative'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-500 italic border">
-                            No measures or activities
-                          </td>
-                          <td colSpan={15} className="px-2 py-2 text-sm text-center text-gray-500 border">
-                            No data available for this initiative
-                          </td>
-                        </tr>
-                      );
-                      return;
-                    }
-
-                    // Process measures - Simplified version
-                    filteredMeasures.forEach((measure, measureIndex) => {
-                      if (!measure) return;
-                      
-                      // Calculate targets based on target type
-                      const q1 = Number(measure.q1_target) || 0;
-                      const q2 = Number(measure.q2_target) || 0;
-                      const q3 = Number(measure.q3_target) || 0;
-                      const q4 = Number(measure.q4_target) || 0;
-                      const annual = Number(measure.annual_target) || 0;
-                      
-                      // Calculate 6-month target
-                      const sixMonthTarget = measure.target_type === 'cumulative' 
-                        ? q1 + q2 : q2;
-                      
-                      tableRows.push(
-                        <tr key={`measure-${initiative.id}-${measure.id || measureIndex}`} className="bg-blue-50">
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? (objIndex + 1) : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? objective.title || 'Untitled Objective' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? effectiveWeight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.name || 'Untitled Initiative' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.weight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            <div className="flex items-center gap-2">
-                              <Target className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                              <span>{measure.name || 'Untitled Measure'}</span>
-                            </div>
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {measure.weight}%
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {measure.baseline || '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {q1}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {q2}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center font-medium text-blue-600 border">
-                            {sixMonthTarget}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {q3}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {q4}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center font-medium text-gray-900 border">
-                            {annual}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            <div className="text-xs">
-                              {initiative.organization_name || 'ICT EO'}
-                            </div>
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-500 border">-</td>
-                        </tr>
-                      );
-                    });
-                    
-                    // Add main activities rows
-                    filteredActivities.forEach((activity, activityIndex) => {
-                      if (!activity) return;
-                      
-                      // Calculate budget values
-                      let budgetRequired = 0;
-                      let government = 0;
-                      let sdg = 0;
-                      let partners = 0;
-                      let other = 0;
-                      let totalAvailable = 0;
-                      let gap = 0;
-                      
-                      if (activity.budget) {
-                        budgetRequired = activity.budget.budget_calculation_type === 'WITH_TOOL' 
-                          ? Number(activity.budget.estimated_cost_with_tool || 0)
-                          : Number(activity.budget.estimated_cost_without_tool || 0);
-                          
-                        government = Number(activity.budget.government_treasury || 0);
-                        sdg = Number(activity.budget.sdg_funding || 0);
-                        partners = Number(activity.budget.partners_funding || 0);
-                        other = Number(activity.budget.other_funding || 0);
-                        
-                        totalAvailable = government + sdg + partners + other;
-                        gap = Math.max(0, budgetRequired - totalAvailable);
-                      }
-                      
-                      // Calculate 6-month target based on target type
-                      const sixMonthTarget = activity.target_type === 'cumulative'
-                        ? Number(activity.q1_target) + Number(activity.q2_target)
-                        : Number(activity.q2_target);
-                      
-                      tableRows.push(
-                        <tr key={`activity-${initiative.id}-${activity.id || activityIndex}`} className="bg-green-50">
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? (objIndex + 1) : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? objective.title || 'Untitled Objective' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? effectiveWeight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.name || 'Untitled Initiative' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {tableRows.length === 0 ? initiative.weight + '%' : ''}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            <div className="flex items-center gap-2">
-                              <Activity className="h-4 w-4 text-green-600 flex-shrink-0" />
-                              <span>{activity.name || 'Untitled Activity'}</span>
-                            </div>
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {`${activity.weight}%`}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {activity.baseline || '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {activity.q1_target || 0}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {activity.q2_target || 0}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center font-medium text-green-600 border">
-                            {sixMonthTarget}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {activity.q3_target || 0}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center text-gray-900 border">
-                            {activity.q4_target || 0}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-center font-medium text-gray-900 border">
-                            {activity.annual_target || 0}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-gray-900 border">
-                            <div className="text-xs">
-                              {initiative.organization_name || 'ICT EO'}
-                            </div>
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right font-medium text-gray-900 border">
-                            {budgetRequired ? formatCurrency(budgetRequired) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right text-gray-900 border">
-                            {government ? formatCurrency(government) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right text-gray-900 border">
-                            {partners ? formatCurrency(partners) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right text-gray-900 border">
-                            {sdg ? formatCurrency(sdg) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right text-gray-900 border">
-                            {other ? formatCurrency(other) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right font-medium text-blue-600 border">
-                            {totalAvailable ? formatCurrency(totalAvailable) : '-'}
-                          </td>
-                          <td className="px-2 py-2 text-sm text-right font-medium text-red-600 border">
-                            {gap ? formatCurrency(gap) : '-'}
-                          </td>
-                        </tr>
-                      );
-                    });
+                    objectiveShown = true;
+                    initiativeShown = true;
                   });
                   
-                  // If no rows were added for this objective, add an empty row
-                  if (tableRows.length === 0) {
-                     tableRows.push(
-                       <tr key={`empty-obj-${objective.id || objIndex}`} className="bg-gray-50">
-                         <td className="px-2 py-2 text-sm text-center text-gray-900 border">{objIndex + 1}</td>
-                         <td className="px-2 py-2 text-sm text-gray-900 border">{objective.title || 'Untitled Objective'}</td>
-                         <td className="px-2 py-2 text-sm text-center text-gray-900 border">{effectiveWeight}%</td>
-                         <td className="px-2 py-2 text-sm text-gray-500 border" colSpan={19}>No initiatives, measures, or activities</td>
-                       </tr>
-                     );
-                   }
-                   
-                   return tableRows;
-                 }).flat()}
-                 
-              {/* Budget Summary Row */}
-              {budgetTotals.total > 0 && (
-                <tr className="bg-blue-100">
-                  <td className="px-2 py-2 text-sm border" colSpan={15}></td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.total)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.government)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.partners)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.sdg)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.other)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.available)}
-                  </td>
-                  <td className="px-2 py-2 text-sm font-bold text-right border">
-                    {formatCurrency(budgetTotals.gap)}
-                  </td>
-                </tr>
-              )}
+                  // If initiative has no measures or activities, show the initiative itself
+                  if ((!initiative.performance_measures || initiative.performance_measures.length === 0) &&
+                      (!initiative.main_activities || initiative.main_activities.length === 0)) {
+                    rows.push(
+                      <tr key={`init-${initiative.id}-empty`} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? objIndex + 1 : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {!objectiveShown ? objective.title : ''}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-900">{initiative.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.weight}%</td>
+                        <td className="px-6 py-4 text-sm text-gray-500 italic">No measures or activities</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.organization_name || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      </tr>
+                    );
+                    objectiveShown = true;
+                  }
+                });
+                
+                return rows;
+              })}
               
-              {/* Funding Distribution Row */}
-              {budgetTotals.available > 0 && (
-                <tr className="bg-gray-100">
-                  <td className="px-2 py-2 text-xs border font-bold text-right" colSpan={15}>FUNDING DISTRIBUTION (%)</td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    100%
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.available > 0 ? `${((budgetTotals.government / budgetTotals.available) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.available > 0 ? `${((budgetTotals.partners / budgetTotals.available) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.available > 0 ? `${((budgetTotals.sdg / budgetTotals.available) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.available > 0 ? `${((budgetTotals.other / budgetTotals.available) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.total > 0 ? `${((budgetTotals.available / budgetTotals.total) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-bold text-right border">
-                    {budgetTotals.total > 0 ? `${((budgetTotals.gap / budgetTotals.total) * 100).toFixed(1)}%` : '0%'}
-                  </td>
-                </tr>
-              )}
+              {/* Totals Row */}
+              <tr className="bg-blue-50 border-t-2 border-blue-200">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900" colSpan={15}>
+                  TOTAL BUDGET
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalRequired)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalGovernment)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalPartners)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalSDG)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalOther)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  {formatCurrency(planTotals.totalAvailable)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  <span className={planTotals.totalGap > 0 ? 'text-red-600' : 'text-green-600'}>
+                    {formatCurrency(planTotals.totalGap)}
+                  </span>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
-      )}
 
-      {/* Additional information when no measures or activities are found */}
-      {isDataLoaded && totals.measures === 0 && totals.activities === 0 && processedObjectives.length > 0 && (
-        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <div className="flex items-center gap-2">
-            <Info className="h-5 w-5 text-yellow-600" />
-            <p className="text-sm font-medium text-yellow-800">No Performance Measures or Activities</p>
+      {/* Budget Summary */}
+      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Budget Summary</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="text-center p-4 bg-blue-50 rounded-lg">
+            <p className="text-sm text-gray-500">Total Required</p>
+            <p className="text-xl font-semibold text-blue-600">{formatCurrency(planTotals.totalRequired)}</p>
           </div>
-          <p className="mt-1 text-sm text-yellow-700 ml-7">
-            You've selected objectives and initiatives, but there are no performance measures or main activities. 
-            Please add at least one performance measure or activity before submitting.
-          </p>
+          <div className="text-center p-4 bg-green-50 rounded-lg">
+            <p className="text-sm text-gray-500">Total Available</p>
+            <p className="text-xl font-semibold text-green-600">{formatCurrency(planTotals.totalAvailable)}</p>
+          </div>
+          <div className="text-center p-4 bg-yellow-50 rounded-lg">
+            <p className="text-sm text-gray-500">Funding Rate</p>
+            <p className="text-xl font-semibold text-yellow-600">
+              {planTotals.totalRequired > 0 
+                ? `${Math.round((planTotals.totalAvailable / planTotals.totalRequired) * 100)}%`
+                : '0%'}
+            </p>
+          </div>
+          <div className="text-center p-4 bg-red-50 rounded-lg">
+            <p className="text-sm text-gray-500">Funding Gap</p>
+            <p className="text-xl font-semibold text-red-600">{formatCurrency(planTotals.totalGap)}</p>
+          </div>
         </div>
-      )}
-      
-      {/* Footer with pagination if needed */}
-      {processedObjectives && processedObjectives.length > 5 && (
-        <div className="mt-4 p-3 bg-gray-50 rounded-md flex justify-center">
-          <p className="text-sm text-gray-600">Showing all {processedObjectives.length} objectives</p>
-        </div>
-      )}
+      </div>
 
-      {/* Submit Section - only show Submit button for non-preview mode */}
-      {!isPreviewMode && (
-        <div className="mt-6">
+      {/* Submit Button (only show if not in preview mode and not view-only) */}
+      {!isPreviewMode && !isViewOnly && (
+        <div className="flex justify-end">
           <button
             onClick={onSubmit}
-            disabled={isSubmitting || !isDataLoaded || processedObjectives.length === 0}
-            className="flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 disabled:opacity-50"
+            disabled={isSubmitting}
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
           >
             {isSubmitting ? (
               <>
-                <Loader className="h-4 w-4 mr-2 animate-spin" />
-                Submitting...
+                <Loader className="h-5 w-5 mr-2 animate-spin" />
+                Submitting Plan...
               </>
             ) : (
               <>
-                <Send className="h-4 w-4 mr-2" />
-                Submit for Review
+                <CheckCircle className="h-5 w-5 mr-2" />
+                Submit Plan for Review
               </>
             )}
           </button>
-        </div>
-       )}
-
-      {isPreviewMode && (
-        <div className="mt-6 flex justify-center">
-          <div className="flex space-x-4">
-            {/* <button
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 flex items-center"
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh Preview
-            </button> */}
-            
-            {/* <button
-              onClick={handleExportPDF}
-              className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 flex items-center"
-            >
-              <FilePdf className="h-4 w-4 mr-2" />
-              Export PDF
-            </button> */}
-          </div>
         </div>
       )}
     </div>
