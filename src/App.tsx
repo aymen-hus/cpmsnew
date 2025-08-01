@@ -14,7 +14,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Planning = React.lazy(() => import('./pages/Planning'));
 const PlanSummary = React.lazy(() => import('./pages/PlanSummary'));
 const EvaluatorDashboard = React.lazy(() => import('./pages/EvaluatorDashboard'));
-const Profile = React.lazy(() => import('./pages/Profile'));
+const Profile = React.lazy(() => import('./pages/profile'));
 const TeamDeskPlanning = React.lazy(() => import('./pages/TeamDeskPlanning'));
 
 // Create QueryClient with better defaults
