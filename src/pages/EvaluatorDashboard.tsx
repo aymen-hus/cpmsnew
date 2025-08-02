@@ -434,7 +434,7 @@ const EvaluatorDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('pending')}
-            className={`py-4 px-1 border-b-2 font-medium text-sm ${
+            className={\`py-4 px-1 border-b-2 font-medium text-sm ${
               activeTab === 'pending'
                 ? 'border-green-600 text-green-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -554,7 +554,7 @@ const EvaluatorDashboard: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {plan.from_date && plan.to_date ? 
-                            `${formatDate(plan.from_date)} - ${formatDate(plan.to_date)}` :
+                            \`${formatDate(plan.from_date)} - ${formatDate(plan.to_date)}` :
                             'Date not available'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -650,11 +650,11 @@ const EvaluatorDashboard: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {plan.from_date && plan.to_date ? 
-                            `${formatDate(plan.from_date)} - ${formatDate(plan.to_date)}` :
+                            \`${formatDate(plan.from_date)} - ${formatDate(plan.to_date)}` :
                             'Date not available'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          <span className={\`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                             plan.status === 'APPROVED' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                           }`}>
                             {plan.status}
