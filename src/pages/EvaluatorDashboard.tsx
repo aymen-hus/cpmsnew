@@ -105,10 +105,11 @@ const EvaluatorDashboard: React.FC = () => {
       try {
         await auth.getCurrentUser();
         
-        // Get ALL submitted plans first, then filter by evaluator's organizations
+        // Get ONLY submitted plans for evaluator's organizations
         const response = await api.get('/plans/', {
           params: {
-            status: 'SUBMITTED'
+            status: 'SUBMITTED',
+            organization__in: userOrgIds.join(',')
           }
         });
         
@@ -116,8 +117,9 @@ const EvaluatorDashboard: React.FC = () => {
         
         const plans = response.data?.results || response.data || [];
         
-        // Filter plans to only show those from evaluator's organizations
+        // Plans are already filtered by organization at API level
         const filteredPlans = plans.filter(plan => 
+          plan.status === 'SUBMITTED' && 
           userOrgIds.includes(Number(plan.organization))
         );
         
@@ -152,14 +154,19 @@ const EvaluatorDashboard: React.FC = () => {
       try {
         await auth.getCurrentUser();
         
-        // Get ALL approved and rejected plans first, then filter by evaluator's organizations
-        const response = await api.get('/plans/');
+        // Get ONLY approved and rejected plans for evaluator's organizations
+        const response = await api.get('/plans/', {
+          params: {
+            status__in: 'APPROVED,REJECTED',
+            organization__in: userOrgIds.join(',')
+          }
+        });
         
         console.log('Reviewed plans response for evaluator:', response.data?.length || 0);
         
         const plans = response.data?.results || response.data || [];
         
-        // Filter to only approved/rejected plans from evaluator's organizations
+        // Filter to ensure only approved/rejected plans from evaluator's organizations
         const filteredPlans = plans.filter(plan => 
           ['APPROVED', 'REJECTED'].includes(plan.status) &&
           userOrgIds.includes(Number(plan.organization))
@@ -601,17 +608,6 @@ const EvaluatorDashboard: React.FC = () => {
                             </button>
                             <button
                               onClick={() => handleReviewSubmit({
-                                status: 'APPROVED',
-                                feedback: 'Plan approved by evaluator'
-                              })}
-                              className="text-green-600 hover:text-green-900 flex items-center ml-2"
-                              title="Quick Approve"
-                            >
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => handleReviewSubmit({
                                 status: 'REJECTED',
                                 feedback: 'Plan needs revision'
                               })}
@@ -620,6 +616,17 @@ const EvaluatorDashboard: React.FC = () => {
                             >
                               <XCircle className="h-4 w-4 mr-1" />
                               Reject
+                            </button>
+                            <button
+                              onClick={() => handleReviewSubmit({
+                                status: 'APPROVED',
+                                feedback: 'Plan approved by evaluator'
+                              })}
+                              className="text-green-600 hover:text-green-900 flex items-center ml-2"
+                              title="Quick Approve"
+                            >
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Approve
                             </button>
                           </div>
                         </td>
@@ -709,12 +716,12 @@ const EvaluatorDashboard: React.FC = () => {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {plan.reviews && plan.reviews.length > 0 ? 
                             formatDate(plan.reviews[plan.reviews.length - 1].reviewed_at) : 
-                            'N/A'}
+                            formatDate(plan.updated_at)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {plan.reviews && plan.reviews.length > 0 ? 
                             plan.reviews[plan.reviews.length - 1].feedback : 
-                            'No feedback'}
+                            'System review'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <button
