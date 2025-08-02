@@ -19,7 +19,8 @@ import {
   ClipboardCheck, 
   FileType, 
   RefreshCw,
-  Info
+  Info,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { exportToExcel, exportToPDF, processDataForExport } from '../lib/utils/export';
@@ -463,6 +464,10 @@ const PlanSummary: React.FC = () => {
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [enrichProgress, setEnrichProgress] = useState('');
   const [hasAttemptedEnrichment, setHasAttemptedEnrichment] = useState(false);
+  const [allOrganizationObjectives, setAllOrganizationObjectives] = useState<any[]>([]);
+  const [isLoadingAllObjectives, setIsLoadingAllObjectives] = useState(false);
+  const [allObjectivesError, setAllObjectivesError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Fetch current user's role and organization
   useEffect(() => {
@@ -482,7 +487,6 @@ const PlanSummary: React.FC = () => {
 
     fetchUserInfo();
   }, []);
-  const [allOrganizationObjectives, setAllOrganizationObjectives] = useState<any[]>([]);
 
   // Fetch plan data
   const { data: planData, isLoading, error, refetch } = useQuery({
@@ -514,6 +518,249 @@ const PlanSummary: React.FC = () => {
       navigate('/evaluator');
     },
   });
+
+  // Enhanced data fetching to get ALL objectives for the organization
+  const fetchAllOrganizationObjectives = async () => {
+    if (!planData?.organization) {
+      console.log('No plan organization ID available');
+      return;
+    }
+
+    try {
+      setIsLoadingAllObjectives(true);
+      setAllObjectivesError(null);
+      console.log(`=== FETCHING ALL OBJECTIVES FOR ORGANIZATION ${planData.organization} ===`);
+      
+      // Step 1: Get ALL objectives from the system
+      console.log('Step 1: Fetching ALL objectives from system...');
+      const allObjectivesResponse = await objectives.getAll();
+      const allObjectives = allObjectivesResponse?.data || [];
+      console.log(`Found ${allObjectives.length} total objectives in system`);
+      
+      if (!Array.isArray(allObjectives) || allObjectives.length === 0) {
+        console.log('No objectives found in system');
+        setAllOrganizationObjectives([]);
+        return;
+      }
+      
+      // Step 2: Get ALL initiatives from the system
+      console.log('Step 2: Fetching ALL initiatives from system...');
+      const allInitiativesResponse = await initiatives.getAll();
+      const allInitiatives = allInitiativesResponse?.data || [];
+      console.log(`Found ${allInitiatives.length} total initiatives in system`);
+      
+      if (!Array.isArray(allInitiatives)) {
+        console.log('No initiatives found in system');
+        setAllOrganizationObjectives(allObjectives.map(obj => ({ ...obj, initiatives: [] })));
+        return;
+      }
+      
+      // Step 3: Filter initiatives by organization and group by objective
+      console.log(`Step 3: Filtering initiatives for organization ${planData.organization}...`);
+      const organizationInitiatives = allInitiatives.filter(initiative => {
+        const isForOrganization = initiative.is_default || 
+                                 !initiative.organization || 
+                                 Number(initiative.organization) === Number(planData.organization);
+        
+        if (isForOrganization) {
+          console.log(`✓ Initiative ${initiative.id} (${initiative.name}) - Org: ${initiative.organization}, Default: ${initiative.is_default}`);
+        }
+        
+        return isForOrganization;
+      });
+      
+      console.log(`Found ${organizationInitiatives.length} initiatives for organization ${planData.organization}`);
+      
+      // Step 4: Group initiatives by objective
+      const objectiveInitiativeMap: Record<string, any[]> = {};
+      organizationInitiatives.forEach(initiative => {
+        const objectiveId = initiative.strategic_objective?.toString() || initiative.strategic_objective;
+        if (objectiveId) {
+          if (!objectiveInitiativeMap[objectiveId]) {
+            objectiveInitiativeMap[objectiveId] = [];
+          }
+          objectiveInitiativeMap[objectiveId].push(initiative);
+        }
+      });
+      
+      console.log('Objectives with initiatives:', Object.keys(objectiveInitiativeMap));
+      
+      // Step 5: Process ALL objectives (including those without initiatives)
+      const enrichedObjectives = [];
+      
+      for (const objective of allObjectives) {
+        const objectiveInitiatives = objectiveInitiativeMap[objective.id.toString()] || [];
+        
+        console.log(`Processing objective ${objective.id} (${objective.title}) with ${objectiveInitiatives.length} initiatives`);
+        
+        // Step 6: For each initiative, fetch complete data
+        const enrichedInitiatives = [];
+        
+        for (let i = 0; i < objectiveInitiatives.length; i++) {
+          const initiative = objectiveInitiatives[i];
+          console.log(`  Processing initiative ${i + 1}/${objectiveInitiatives.length}: ${initiative.name}`);
+          
+          try {
+            // Fetch performance measures with retry
+            let measures = [];
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount < maxRetries) {
+              try {
+                console.log(`    Fetching measures for initiative ${initiative.id} (attempt ${retryCount + 1})`);
+                const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+                measures = measuresResponse?.data || [];
+                console.log(`    Found ${measures.length} measures`);
+                break;
+              } catch (error) {
+                retryCount++;
+                if (retryCount >= maxRetries) {
+                  console.warn(`    Failed to fetch measures for initiative ${initiative.id} after ${maxRetries} attempts`);
+                  measures = [];
+                } else {
+                  console.warn(`    Retry ${retryCount} for measures...`);
+                  await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
+                }
+              }
+            }
+            
+            // Filter measures by organization
+            const filteredMeasures = measures.filter(measure =>
+              !measure.organization || Number(measure.organization) === Number(planData.organization)
+            );
+            
+            // Fetch main activities with retry
+            let activities = [];
+            retryCount = 0;
+            
+            while (retryCount < maxRetries) {
+              try {
+                console.log(`    Fetching activities for initiative ${initiative.id} (attempt ${retryCount + 1})`);
+                const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+                activities = activitiesResponse?.data || [];
+                console.log(`    Found ${activities.length} activities`);
+                break;
+              } catch (error) {
+                retryCount++;
+                if (retryCount >= maxRetries) {
+                  console.warn(`    Failed to fetch activities for initiative ${initiative.id} after ${maxRetries} attempts`);
+                  activities = [];
+                } else {
+                  console.warn(`    Retry ${retryCount} for activities...`);
+                  await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
+                }
+              }
+            }
+            
+            // Filter activities by organization
+            const filteredActivities = activities.filter(activity =>
+              !activity.organization || Number(activity.organization) === Number(planData.organization)
+            );
+            
+            console.log(`    Initiative ${initiative.id} final: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+            
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: filteredMeasures,
+              main_activities: filteredActivities
+            });
+            
+            // Delay between initiatives
+            if (i < objectiveInitiatives.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            
+          } catch (error) {
+            console.warn(`Error processing initiative ${initiative.id}:`, error);
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: [],
+              main_activities: []
+            });
+          }
+        }
+        
+        // Add ALL objectives (even without initiatives) with proper effective weight
+        const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+          ? objective.planner_weight
+          : objective.weight;
+          
+        enrichedObjectives.push({
+          ...objective,
+          effective_weight: effectiveWeight,
+          initiatives: enrichedInitiatives
+        });
+        
+        console.log(`✓ Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+        
+        // Delay between objectives
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      console.log(`=== FINAL RESULT ===`);
+      console.log(`Successfully processed ${enrichedObjectives.length} objectives for organization ${planData.organization}`);
+      
+      const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
+      const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
+        sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.performance_measures?.length || 0), 0) || 0), 0);
+      const totalActivities = enrichedObjectives.reduce((sum, obj) => 
+        sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.main_activities?.length || 0), 0) || 0), 0);
+      
+      console.log(`TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+      
+      setAllOrganizationObjectives(enrichedObjectives);
+      
+    } catch (error) {
+      console.error('Error fetching all organization objectives:', error);
+      setAllObjectivesError('Failed to load complete organization data');
+    } finally {
+      setIsLoadingAllObjectives(false);
+    }
+  };
+
+  // Handle showing complete table
+  const handleShowCompleteTable = async () => {
+    if (allOrganizationObjectives.length === 0) {
+      await fetchAllOrganizationObjectives();
+    }
+    setShowCompleteTable(true);
+  };
+
+  // Handle Excel export
+  const handleExportToExcel = () => {
+    try {
+      setExportError(null);
+      
+      if (!allOrganizationObjectives || allOrganizationObjectives.length === 0) {
+        setExportError('No data available to export. Please load the complete table first.');
+        return;
+      }
+      
+      console.log('Exporting to Excel with data:', allOrganizationObjectives.length, 'objectives');
+      
+      // Use the same export logic as PlanReviewTable
+      const exportData = processDataForExport(allOrganizationObjectives, 'en');
+      exportToExcel(
+        exportData,
+        `plan-${planData.id}-${new Date().toISOString().slice(0, 10)}`,
+        'en',
+        {
+          organization: planData.organization_name || 'Unknown Organization',
+          planner: planData.planner_name || 'Unknown Planner',
+          fromDate: planData.from_date || '',
+          toDate: planData.to_date || '',
+          planType: planData.type || 'Unknown Type'
+        }
+      );
+      
+      console.log('Excel export completed successfully');
+      
+    } catch (error) {
+      console.error('Excel export failed:', error);
+      setExportError('Failed to export to Excel. Please try again.');
+    }
+  };
 
   // Function to handle showing the table view with complete data
   const handleShowTableView = async (forceRefresh = false) => {
@@ -1155,7 +1402,6 @@ const PlanSummary: React.FC = () => {
                   <Info className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-yellow-800 mb-2">No Data for This Plan</h3>
                   <p className="text-yellow-700 mb-4">
-                objectives={allOrganizationObjectives}
                     • The plan has no objectives assigned
                     • The plan data is incomplete
                     • Network issues preventing data loading
