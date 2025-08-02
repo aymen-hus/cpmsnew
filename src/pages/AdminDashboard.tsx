@@ -252,8 +252,7 @@ const AdminDashboard: React.FC = () => {
         fundedBudget: 0,
         fundingGap: 0,
         orgStats: {},
-        monthlyTrends: {},
-        eligiblePlansForBudget: 0
+        monthlyTrends: {}
       };
     }
 
@@ -267,12 +266,12 @@ const AdminDashboard: React.FC = () => {
       fundedBudget: 0,
       fundingGap: 0,
       orgStats: {} as Record<string, any>,
-      monthlyTrends: {} as Record<string, number>,
-      eligiblePlansForBudget: 0
+      monthlyTrends: {} as Record<string, number>
     };
 
     // Organization-wise statistics
     const orgBudgetMap: Record<string, { total: number, funded: number, gap: number, planCount: number }> = {};
+    const orgBudgetMapWithEligible: Record<string, { total: number, funded: number, gap: number, planCount: number, eligibleCount: number }> = {};
 
     allPlansData.forEach(plan => {
       // Count by status
@@ -294,31 +293,27 @@ const AdminDashboard: React.FC = () => {
         organizationsMap[plan.organization] || 
         `Organization ${plan.organization}`;
 
-      if (!orgBudgetMap[orgName]) {
-        orgBudgetMap[orgName] = { total: 0, funded: 0, gap: 0, planCount: 0 };
+      if (!orgBudgetMapWithEligible[orgName]) {
+        orgBudgetMapWithEligible[orgName] = { total: 0, funded: 0, gap: 0, planCount: 0, eligibleCount: 0 };
       }
       
-      orgBudgetMap[orgName].planCount++;
+      orgBudgetMapWithEligible[orgName].planCount++;
 
       // Use the calculated budget data from fetchCompleteBudgetData
       const planTotalBudget = Number(plan.budget_total || 0);
       const planFundedBudget = Number(plan.funded_total || 0);
       const planFundingGap = Number(plan.funding_gap || 0);
 
-      // Only count eligible plans for budget calculations
-      if (plan.status === 'SUBMITTED' || plan.status === 'APPROVED') {
-        stats.eligiblePlansForBudget++;
-        stats.totalBudget += planTotalBudget;
-        stats.fundedBudget += planFundedBudget;
-        stats.fundingGap += planFundingGap;
+      stats.totalBudget += planTotalBudget;
+      stats.fundedBudget += planFundedBudget;
+      stats.fundingGap += planFundingGap;
 
-        orgBudgetMap[orgName].total += planTotalBudget;
-        orgBudgetMap[orgName].funded += planFundedBudget;
-        orgBudgetMap[orgName].gap += planFundingGap;
-      }
+      orgBudgetMap[orgName].total += planTotalBudget;
+      orgBudgetMap[orgName].funded += planFundedBudget;
+      orgBudgetMap[orgName].gap += planFundingGap;
     });
 
-    stats.orgStats = orgBudgetMap;
+    stats.orgStats = orgBudgetMapWithEligible;
     return stats;
   };
 
@@ -364,6 +359,7 @@ const AdminDashboard: React.FC = () => {
         label: 'Available Funding',
         data: Object.keys(stats.orgStats)
           .filter(orgName => stats.orgStats[orgName].total > 0 || stats.orgStats[orgName].funded > 0)
+        orgBudgetMapWithEligible[orgName].eligibleCount++;
           .map(orgName => stats.orgStats[orgName].funded),
         backgroundColor: 'rgba(75, 192, 192, 0.6)',
         borderColor: 'rgba(75, 192, 192, 1)',
@@ -374,9 +370,9 @@ const AdminDashboard: React.FC = () => {
         data: Object.keys(stats.orgStats)
           .filter(orgName => stats.orgStats[orgName].total > 0 || stats.orgStats[orgName].funded > 0)
           .map(orgName => stats.orgStats[orgName].gap),
-        backgroundColor: 'rgba(255, 99, 132, 0.6)',
-        borderColor: 'rgba(255, 99, 132, 1)',
-        borderWidth: 1
+        orgBudgetMapWithEligible[orgName].total += planTotalBudget;
+        orgBudgetMapWithEligible[orgName].funded += planFundedBudget;
+        orgBudgetMapWithEligible[orgName].gap += planFundingGap;
       }
     ]
   };
@@ -616,12 +612,9 @@ const AdminDashboard: React.FC = () => {
                 <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
                   <span className="text-sm font-medium text-purple-700">Average Budget per Plan</span>
                   <span className="text-lg font-semibold text-purple-600">
-                    ${stats.eligiblePlansForBudget > 0 && stats.totalBudget > 0 ? 
-                      Math.round(stats.totalBudget / stats.eligiblePlansForBudget).toLocaleString() : '0'}
+                    ${stats.totalPlans > 0 && stats.totalBudget > 0 ? 
+                      Math.round(stats.totalBudget / stats.totalPlans).toLocaleString() : '0'}
                   </span>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Based on {stats.eligiblePlansForBudget} eligible plans
-                  </p>
                 </div>
               </div>
             </div>
