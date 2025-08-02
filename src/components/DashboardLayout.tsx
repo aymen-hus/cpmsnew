@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Building2, LogOut, LayoutDashboard, FileSpreadsheet, Activity, ClipboardCheck, UserCircle } from 'lucide-react';
+import { Building2, LogOut, LayoutDashboard, FileSpreadsheet, Activity, ClipboardCheck, UserCircle, BarChart3 } from 'lucide-react';
 import { useLanguage } from '../lib/i18n/LanguageContext';
 import { auth } from '../lib/api';
 import LanguageSwitch from './LanguageSwitch';
@@ -136,6 +136,21 @@ const DashboardLayout: React.FC = () => {
                   >
                     <ClipboardCheck className="h-5 w-5 mr-2" />
                     {t('nav.evaluator')}
+                  </Link>
+                )}
+
+                {/* Admin Dashboard link */}
+                {isAdmin(authState.userOrganizations) && (
+                  <Link
+                    to="/admin"
+                    className={`flex items-center px-3 py-2 rounded-md text-sm font-medium ${
+                      isActive('/admin')
+                        ? 'text-white bg-green-800 shadow-inner'
+                        : 'text-green-100 hover:text-white hover:bg-green-600 transition-colors'
+                    }`}
+                  >
+                    <BarChart3 className="h-5 w-5 mr-2" />
+                    Admin Analytics
                   </Link>
                 )}
               </div>

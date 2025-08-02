@@ -14,6 +14,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Planning = React.lazy(() => import('./pages/Planning'));
 const PlanSummary = React.lazy(() => import('./pages/PlanSummary'));
 const EvaluatorDashboard = React.lazy(() => import('./pages/EvaluatorDashboard'));
+const AdminDashboard = React.lazy(() => import('./pages/AdminDashboard'));
 const Profile = React.lazy(() => import('./pages/profile'));
 const TeamDeskPlanning = React.lazy(() => import('./pages/TeamDeskPlanning'));
 
@@ -62,6 +63,7 @@ function App() {
                 <Route path="/plans/:planId" element={<PlanSummary />} />
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/evaluator" element={<EvaluatorDashboard />} />
+                <Route path="/admin" element={<AdminDashboard />} />
               </Route>
               
               {/* Catch all route */}
