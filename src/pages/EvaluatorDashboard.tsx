@@ -105,11 +105,10 @@ const EvaluatorDashboard: React.FC = () => {
       try {
         await auth.getCurrentUser();
         
-        // Get only plans from evaluator's organizations with SUBMITTED status
+        // Get ALL submitted plans first, then filter by evaluator's organizations
         const response = await api.get('/plans/', {
           params: {
-            status: 'SUBMITTED',
-            organization__in: userOrgIds.join(',')
+            status: 'SUBMITTED'
           }
         });
         
@@ -117,16 +116,23 @@ const EvaluatorDashboard: React.FC = () => {
         
         const plans = response.data?.results || response.data || [];
         
+        // Filter plans to only show those from evaluator's organizations
+        const filteredPlans = plans.filter(plan => 
+          userOrgIds.includes(Number(plan.organization))
+        );
+        
+        console.log(`Filtered ${plans.length} total plans to ${filteredPlans.length} for evaluator orgs:`, userOrgIds);
+        
         // Map organization names
-        if (Array.isArray(plans)) {
-          plans.forEach((plan: any) => {
+        if (Array.isArray(filteredPlans)) {
+          filteredPlans.forEach((plan: any) => {
             if (plan.organization && organizationsMap[plan.organization]) {
               plan.organizationName = organizationsMap[plan.organization];
             }
           });
         }
         
-        return { data: plans };
+        return { data: filteredPlans };
       } catch (error) {
         console.error('Error fetching pending reviews:', error);
         throw error;
@@ -146,28 +152,31 @@ const EvaluatorDashboard: React.FC = () => {
       try {
         await auth.getCurrentUser();
         
-        // Get approved and rejected plans from evaluator's organizations
-        const response = await api.get('/plans/', {
-          params: {
-            status__in: 'APPROVED,REJECTED',
-            organization__in: userOrgIds.join(',')
-          }
-        });
+        // Get ALL approved and rejected plans first, then filter by evaluator's organizations
+        const response = await api.get('/plans/');
         
         console.log('Reviewed plans response for evaluator:', response.data?.length || 0);
         
         const plans = response.data?.results || response.data || [];
         
+        // Filter to only approved/rejected plans from evaluator's organizations
+        const filteredPlans = plans.filter(plan => 
+          ['APPROVED', 'REJECTED'].includes(plan.status) &&
+          userOrgIds.includes(Number(plan.organization))
+        );
+        
+        console.log(`Filtered ${plans.length} total plans to ${filteredPlans.length} reviewed plans for evaluator orgs:`, userOrgIds);
+        
         // Map organization names
-        if (Array.isArray(plans)) {
-          plans.forEach((plan: any) => {
+        if (Array.isArray(filteredPlans)) {
+          filteredPlans.forEach((plan: any) => {
             if (plan.organization && organizationsMap[plan.organization]) {
               plan.organizationName = organizationsMap[plan.organization];
             }
           });
         }
         
-        return { data: plans };
+        return { data: filteredPlans };
       } catch (error) {
         console.error('Error fetching reviewed plans:', error);
         throw error;
@@ -430,33 +439,46 @@ const EvaluatorDashboard: React.FC = () => {
             <div className="flex items-center">
               <BarChart3 className="h-5 w-5 mr-2" />
               Analytics
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveTab('pending')}
-            className={\`py-4 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'pending'
+      <div className="mb-6">
+        <div className="border-b border-gray-200">
+          <nav className="flex -mb-px">
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'pending'
+                  ? 'border-green-600 text-green-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center">
+                <Bell className="h-5 w-5 mr-2" />
+                Pending Reviews
+                {pendingCount > 0 && (
+                  <span className="ml-2 bg-red-100 text-red-800 px-2 py-0.5 rounded-full text-xs">
+                    {pendingCount}
+                  </span>
+                )}
+              </div>
+            </button>
+            onClick={() => setActiveTab('reviewed')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'reviewed'
                 ? 'border-green-600 text-green-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
             <div className="flex items-center">
-              <Bell className="h-5 w-5 mr-2" />
-              Pending Reviews
-              {pendingCount > 0 && (
-                <span className="ml-2 bg-red-100 text-red-800 px-2 py-0.5 rounded-full text-xs">
-                  {pendingCount}
-                </span>
-              )}
-              {summaryStats.pendingReviews > 0 && (
-                <span className="ml-2 bg-red-100 text-red-800 px-2 py-0.5 rounded-full text-xs">
-                  {summaryStats.pendingReviews}
+              <CheckCircle className="h-5 w-5 mr-2" />
+              Reviewed Plans
+              {reviewedCount > 0 && (
+                <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs">
+                  {reviewedCount}
                 </span>
               )}
             </div>
           </button>
         </nav>
-            onClick={() => setActiveTab('reviewed')}
+      </div>
 
 
       {/* Pending Reviews Tab */}
@@ -573,10 +595,32 @@ const EvaluatorDashboard: React.FC = () => {
                             </button>
                             <button
                               onClick={() => handleReviewPlan(plan)}
-                              className="text-green-600 hover:text-green-900 flex items-center"
+                              className="text-green-600 hover:text-green-900 flex items-center ml-2"
                             >
                               <CheckCircle className="h-4 w-4 mr-1" />
                               Review
+                            </button>
+                            <button
+                              onClick={() => handleReviewSubmit({
+                                status: 'APPROVED',
+                                feedback: 'Plan approved by evaluator'
+                              })}
+                              className="text-green-600 hover:text-green-900 flex items-center ml-2"
+                              title="Quick Approve"
+                            >
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleReviewSubmit({
+                                status: 'REJECTED',
+                                feedback: 'Plan needs revision'
+                              })}
+                              className="text-red-600 hover:text-red-900 flex items-center ml-2"
+                              title="Quick Reject"
+                            >
+                              <XCircle className="h-4 w-4 mr-1" />
+                              Reject
                             </button>
                           </div>
                         </td>
@@ -631,6 +675,9 @@ const EvaluatorDashboard: React.FC = () => {
                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Reviewed Date
                       </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Feedback
+                      </th>
                       <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
                       </th>
@@ -664,6 +711,11 @@ const EvaluatorDashboard: React.FC = () => {
                           {plan.reviews && plan.reviews.length > 0 ? 
                             formatDate(plan.reviews[plan.reviews.length - 1].reviewed_at) : 
                             'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {plan.reviews && plan.reviews.length > 0 ? 
+                            plan.reviews[plan.reviews.length - 1].feedback : 
+                            'No feedback'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <button
