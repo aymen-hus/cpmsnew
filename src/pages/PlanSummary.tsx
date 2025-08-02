@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, FileSpreadsheet, File as FilePdf, ArrowLeft, AlertCircle, Loader, Building2, Calendar, User, CheckCircle, XCircle, ClipboardCheck, FileType, RefreshCw } from 'lucide-react';
 import { useLanguage } from '../lib/i18n/LanguageContext';
-import { plans, organizations, auth, api } from '../lib/api';
+import { plans, organizations, auth, api, initiatives, performanceMeasures, mainActivities } from '../lib/api';
 import { format } from 'date-fns';
 import { exportToExcel, exportToPDF } from '../lib/utils/export';
 import PlanReviewForm from '../components/PlanReviewForm';
@@ -30,6 +30,9 @@ const PlanSummary: React.FC = () => {
   const [retryCount, setRetryCount] = useState(0);
   const [processedPlanData, setProcessedPlanData] = useState<any>(null);
   const [showTableView, setShowTableView] = useState(false);
+  const [enrichedObjectives, setEnrichedObjectives] = useState<any[]>([]);
+  const [isEnrichingData, setIsEnrichingData] = useState(false);
+  const [enrichmentError, setEnrichmentError] = useState<string | null>(null);
 
   // Query hooks
   const { data: organizationsData } = useQuery({
