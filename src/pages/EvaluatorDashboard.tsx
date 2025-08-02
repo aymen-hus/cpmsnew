@@ -379,32 +379,6 @@ const EvaluatorDashboard: React.FC = () => {
   const approvedCount = reviewedPlans?.data?.filter((p: any) => p.status === 'APPROVED').length || 0;
   const rejectedCount = reviewedPlans?.data?.filter((p: any) => p.status === 'REJECTED').length || 0;
 
-  // Calculate budget data only for SUBMITTED and APPROVED plans (exclude REJECTED)
-  const activePlans = [
-    ...(pendingPlans?.data || []),
-    ...(reviewedPlans?.data?.filter((p: any) => p.status === 'APPROVED') || [])
-  ];
-
-  // Calculate budget statistics from active plans only
-  const budgetStats = activePlans.reduce((stats, plan) => {
-    if (plan.budget_total && plan.budget_total > 0) {
-      stats.totalBudget += Number(plan.budget_total) || 0;
-      stats.fundedBudget += Number(plan.funded_total) || 0;
-      stats.fundingGap += Number(plan.funding_gap) || 0;
-      stats.plansWithBudget++;
-    }
-    return stats;
-  }, {
-    totalBudget: 0,
-    fundedBudget: 0,
-    fundingGap: 0,
-    plansWithBudget: 0
-  });
-
-  const averageBudgetPerPlan = budgetStats.plansWithBudget > 0 
-    ? budgetStats.totalBudget / budgetStats.plansWithBudget 
-    : 0;
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -467,61 +441,6 @@ const EvaluatorDashboard: React.FC = () => {
             <XCircle className="h-5 w-5 text-red-500" />
           </div>
           <p className="text-3xl font-semibold text-red-600">{rejectedCount}</p>
-        </div>
-      </div>
-
-      {/* Budget Analytics Cards - Only for SUBMITTED and APPROVED plans */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-medium text-gray-500">Total Budget (Active)</h3>
-            <DollarSign className="h-5 w-5 text-green-500" />
-          </div>
-          <p className="text-2xl font-semibold text-green-600">
-            ${budgetStats.totalBudget.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            Submitted + Approved only
-          </p>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-medium text-gray-500">Available Funding</h3>
-            <PieChart className="h-5 w-5 text-blue-500" />
-          </div>
-          <p className="text-2xl font-semibold text-blue-600">
-            ${budgetStats.fundedBudget.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {budgetStats.totalBudget > 0 ? Math.round((budgetStats.fundedBudget / budgetStats.totalBudget) * 100) : 0}% funded
-          </p>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-medium text-gray-500">Funding Gap</h3>
-            <BarChart3 className="h-5 w-5 text-red-500" />
-          </div>
-          <p className="text-2xl font-semibold text-red-600">
-            ${budgetStats.fundingGap.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            Unfunded amount
-          </p>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-medium text-gray-500">Avg Budget/Plan</h3>
-            <LayoutGrid className="h-5 w-5 text-purple-500" />
-          </div>
-          <p className="text-2xl font-semibold text-purple-600">
-            ${averageBudgetPerPlan.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {budgetStats.plansWithBudget} plans with budget
-          </p>
         </div>
       </div>
 
