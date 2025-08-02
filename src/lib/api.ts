@@ -738,55 +738,118 @@ export const programs = {
 export const initiatives = {
   getAll: async () => {
     try {
+      // Production-friendly approach with longer timeout and retry
       const timestamp = new Date().getTime();
-      const response = await api.get(`/strategic-initiatives/?_=${timestamp}`);
+      let response;
+      
+      try {
+        // Try standard API call first with extended timeout
+        response = await api.get(`/strategic-initiatives/?_=${timestamp}`, {
+          timeout: 15000, // 15 second timeout for production
+          headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+        });
+      } catch (firstError) {
+        console.warn('First attempt failed, trying alternative format:', firstError);
+        // Try alternative format
+        response = await api.get('/strategic-initiatives/', {
+          params: { _: timestamp },
+          timeout: 10000,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+      }
+      
       return response;
     } catch (error) {
       console.error('Failed to fetch initiatives:', error);
       
-      // In production, return empty array instead of throwing
-      if (process.env.NODE_ENV === 'production') {
-        console.warn('Returning empty initiatives due to error');
-        return { data: [] };
-      }
-      
-      throw error;
+      // Always return empty array in case of error to prevent crashes
+      console.warn('Returning empty initiatives due to error');
+      return { data: [] };
     }
   },
   
   getById: async (id: string) => {
     try {
       const timestamp = new Date().getTime();
-      const response = await api.get(`/strategic-initiatives/${id}/?_=${timestamp}`);
+      let response;
+      
+      try {
+        response = await api.get(`/strategic-initiatives/${id}/?_=${timestamp}`, {
+          timeout: 10000
+        });
+      } catch (firstError) {
+        console.warn(`First attempt failed for initiative ${id}, trying alternative:`, firstError);
+        response = await api.get(`/strategic-initiatives/${id}/`, {
+          params: { _: timestamp },
+          timeout: 8000
+        });
+      }
+      
       return response.data;
     } catch (error) {
       console.error(`Failed to fetch initiative ${id}:`, error);
-      
-      // In production, return null instead of throwing
-      if (process.env.NODE_ENV === 'production') {
-        console.warn(`Returning null for initiative ${id} due to error`);
-        return null;
-      }
-      
-      throw error;
+      console.warn(`Returning null for initiative ${id} due to error`);
+      return null;
     }
   },
   
   getByObjective: async (objectiveId: string) => {
     try {
       const timestamp = new Date().getTime();
-      const response = await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`);
-      return response;
-    } catch (error) {
-      console.error(`Failed to fetch initiatives for objective ${objectiveId}:`, error);
       
-      // In production, return empty array instead of throwing
-      if (process.env.NODE_ENV === 'production') {
-        console.warn(`Returning empty initiatives for objective ${objectiveId} due to error`);
-        return { data: [] };
+      console.log(`Fetching initiatives for objective ${objectiveId} in production mode`);
+      
+      let response;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          if (retryCount === 0) {
+            // First attempt: standard format with extended timeout
+            response = await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`, {
+              timeout: 12000,
+              headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+            });
+          } else if (retryCount === 1) {
+            // Second attempt: alternative parameter format
+            response = await api.get('/strategic-initiatives/', {
+              params: { 
+                objective: objectiveId,
+                _: timestamp + retryCount
+              },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } else {
+            // Third attempt: simplified call
+            response = await api.get(`/strategic-initiatives/`, {
+              timeout: 5000,
+              params: { objective: objectiveId }
+            });
+          }
+          
+          // If we get here, the call succeeded
+          console.log(`Successfully fetched initiatives for objective ${objectiveId} on attempt ${retryCount + 1}`);
+          break;
+          
+        } catch (attemptError) {
+          retryCount++;
+          console.warn(`Attempt ${retryCount} failed for objective ${objectiveId}:`, attemptError);
+          
+          if (retryCount >= maxRetries) {
+            throw attemptError;
+          }
+          
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
       }
       
-      throw error;
+      return response;
+    } catch (error) {
+      console.warn(`Failed to fetch initiatives for objective ${objectiveId} after ${maxRetries} attempts:`, error);
+      return { data: [] };
     }
   },
   
@@ -876,57 +939,78 @@ export const initiatives = {
 export const performanceMeasures = {
   async getByInitiative(initiativeId: string) {
     try {
-      // Ensure we have a valid initiative ID
       if (!initiativeId) {
-        console.warn('No initiative ID provided to getByInitiative');
+        console.warn('No initiative ID provided to performanceMeasures.getByInitiative');
         return { data: [] };
       }
       
+      console.log(`Fetching performance measures for initiative ${initiativeId} in production mode`);
+      
+      const timestamp = new Date().getTime();
       const id = String(initiativeId);
       
-      // Add timestamp for cache busting in production
-      const timestamp = new Date().getTime();
-      
-      // Try with different parameter formats for production compatibility
       let response;
-      try {
-        // First try with the standard format
-        response = await api.get(`/performance-measures/?initiative=${id}&_=${timestamp}`);
-      } catch (error) {
-        console.warn(`First attempt failed for initiative ${id}, trying alternative format:`, error);
-        // Try alternative format that might work better in production
-        response = await api.get(`/performance-measures/`, {
-          params: {
-            initiative: id,
-            _: timestamp
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          if (retryCount === 0) {
+            // First attempt: standard format with extended timeout
+            response = await api.get(`/performance-measures/?initiative=${id}&_=${timestamp}`, {
+              timeout: 12000,
+              headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+            });
+          } else if (retryCount === 1) {
+            // Second attempt: alternative parameter format
+            response = await api.get('/performance-measures/', {
+              params: { 
+                initiative: id,
+                initiative_id: id, // Try both parameter names
+                _: timestamp + retryCount
+              },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } else {
+            // Third attempt: simplified call with different endpoint approach
+            response = await api.get(`/performance-measures/`, {
+              timeout: 5000,
+              params: { initiative: id }
+            });
           }
-        });
+          
+          console.log(`Successfully fetched performance measures for initiative ${id} on attempt ${retryCount + 1}`);
+          break;
+          
+        } catch (attemptError) {
+          retryCount++;
+          console.warn(`Performance measures attempt ${retryCount} failed for initiative ${id}:`, attemptError);
+          
+          if (retryCount >= maxRetries) {
+            throw attemptError;
+          }
+          
+          // Wait before retry with exponential backoff
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
       }
       
-      // Ensure we return a consistent format
       if (!response.data) {
-        console.warn(`No data returned for initiative ${id}`);
+        console.warn(`No performance measures data returned for initiative ${id}`);
         return { data: [] };
       }
       
-      // Handle different response formats
       const data = response.data.results || response.data;
       if (!Array.isArray(data)) {
-        console.warn(`Expected array but got:`, typeof data, data);
+        console.warn(`Expected array but got for initiative ${id}:`, typeof data);
         return { data: [] };
       }
       
       return response;
     } catch (error) {
-      console.error(`Failed to get performance measures for initiative ${initiativeId}:`, error);
-      
-      // In production, return empty array instead of throwing to prevent crashes
-      if (process.env.NODE_ENV === 'production') {
-        console.warn(`Returning empty performance measures for initiative ${initiativeId} due to error`);
-        return { data: [] };
-      }
-      
-      throw error;
+      console.warn(`Failed to get performance measures for initiative ${initiativeId} after retries:`, error);
+      return { data: [] };
     }
   },
   
@@ -1025,57 +1109,78 @@ export const performanceMeasures = {
 export const mainActivities = {
   async getByInitiative(initiativeId: string) {
     try {
-      // Ensure we have a valid initiative ID
       if (!initiativeId) {
-        console.warn('No initiative ID provided to getByInitiative');
+        console.warn('No initiative ID provided to mainActivities.getByInitiative');
         return { data: [] };
       }
       
+      console.log(`Fetching main activities for initiative ${initiativeId} in production mode`);
+      
+      const timestamp = new Date().getTime();
       const id = String(initiativeId);
       
-      // Add timestamp for cache busting in production
-      const timestamp = new Date().getTime();
-      
-      // Try with different parameter formats for production compatibility
       let response;
-      try {
-        // First try with the standard format
-        response = await api.get(`/main-activities/?initiative=${id}&_=${timestamp}`);
-      } catch (error) {
-        console.warn(`First attempt failed for initiative ${id}, trying alternative format:`, error);
-        // Try alternative format that might work better in production
-        response = await api.get(`/main-activities/`, {
-          params: {
-            initiative: id,
-            _: timestamp
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          if (retryCount === 0) {
+            // First attempt: standard format with extended timeout
+            response = await api.get(`/main-activities/?initiative=${id}&_=${timestamp}`, {
+              timeout: 12000,
+              headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+            });
+          } else if (retryCount === 1) {
+            // Second attempt: alternative parameter format
+            response = await api.get('/main-activities/', {
+              params: { 
+                initiative: id,
+                initiative_id: id, // Try both parameter names
+                _: timestamp + retryCount
+              },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } else {
+            // Third attempt: simplified call
+            response = await api.get(`/main-activities/`, {
+              timeout: 5000,
+              params: { initiative: id }
+            });
           }
-        });
+          
+          console.log(`Successfully fetched main activities for initiative ${id} on attempt ${retryCount + 1}`);
+          break;
+          
+        } catch (attemptError) {
+          retryCount++;
+          console.warn(`Main activities attempt ${retryCount} failed for initiative ${id}:`, attemptError);
+          
+          if (retryCount >= maxRetries) {
+            throw attemptError;
+          }
+          
+          // Wait before retry with exponential backoff
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
       }
       
-      // Ensure we return a consistent format
       if (!response.data) {
-        console.warn(`No data returned for initiative ${id}`);
+        console.warn(`No main activities data returned for initiative ${id}`);
         return { data: [] };
       }
       
-      // Handle different response formats
       const data = response.data.results || response.data;
       if (!Array.isArray(data)) {
-        console.warn(`Expected array but got:`, typeof data, data);
+        console.warn(`Expected array but got for initiative ${id}:`, typeof data);
         return { data: [] };
       }
       
       return response;
     } catch (error) {
-      console.error(`Failed to get main activities for initiative ${initiativeId}:`, error);
-      
-      // In production, return empty array instead of throwing to prevent crashes
-      if (process.env.NODE_ENV === 'production') {
-        console.warn(`Returning empty main activities for initiative ${initiativeId} due to error`);
-        return { data: [] };
-      }
-      
-      throw error;
+      console.warn(`Failed to get main activities for initiative ${initiativeId} after retries:`, error);
+      return { data: [] };
     }
   },
   

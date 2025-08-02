@@ -1,212 +1,188 @@
 import React, { useState, useEffect } from 'react';
-import { useLanguage } from '../lib/i18n/LanguageContext';
-import { BarChart3, Target, Activity, DollarSign, Calendar, User, Building2, FileType, CheckCircle, AlertCircle, Info, Loader, FileSpreadsheet, Download } from 'lucide-react';
-import { StrategicObjective } from '../types/organization';
-import { PlanType } from '../types/plan';
-import { formatCurrency, processDataForExport, exportToExcel, exportToPDF } from '../lib/utils/export';
-import { initiatives, performanceMeasures, mainActivities, auth, api } from '../lib/api';
+import { FileSpreadsheet, File as FilePdf, Building2, AlertCircle, CheckCircle, RefreshCw, Loader, Calendar, User, Target, Activity, DollarSign } from 'lucide-react';
+import { format } from 'date-fns';
+import { exportToExcel, exportToPDF, processDataForExport } from '../lib/utils/export';
+import { initiatives, performanceMeasures, mainActivities, api, auth } from '../lib/api';
 import axios from 'axios';
-import Cookies from 'js-cookie';
 
 interface PlanReviewTableProps {
-  objectives: StrategicObjective[];
+  objectives: any[];
   onSubmit: () => Promise<void>;
   isSubmitting: boolean;
   organizationName: string;
   plannerName: string;
   fromDate: string;
   toDate: string;
-  planType: PlanType;
+  planType: string;
   isPreviewMode?: boolean;
   userOrgId?: number | null;
   isViewOnly?: boolean;
 }
 
-// Helper function to fetch initiatives for an objective with production error handling
-const fetchInitiativesForObjective = async (objectiveId: string | number): Promise<any[]> => {
-  const strategies = [
-    // Strategy 1: Standard format with short timeout
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      
-      try {
-        const response = await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${Date.now()}`, {
-          signal: controller.signal,
-          headers: { 'Cache-Control': 'no-cache' }
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    },
+// Production-safe API helper with comprehensive retry logic
+const productionSafeAPI = {
+  async fetchWithRetry(apiCall: () => Promise<any>, description: string, maxRetries = 3): Promise<any> {
+    let lastError;
     
-    // Strategy 2: Alternative parameter format
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await api.get('/strategic-initiatives/', {
-          params: { objective_id: objectiveId, _: Date.now() },
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    },
-
-    // Strategy 3: Get all and filter (with very short timeout)
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      
-      try {
-        const response = await api.get('/strategic-initiatives/', {
-          signal: controller.signal,
-          headers: { 'Cache-Control': 'no-cache' }
-        });
-        clearTimeout(timeoutId);
+        console.log(`${description} - Attempt ${attempt}/${maxRetries}`);
         
-        const allInitiatives = Array.isArray(response.data) ? response.data : (response.data.results || []);
-        return allInitiatives.filter(init => 
-          init.strategic_objective && init.strategic_objective.toString() === objectiveId.toString()
-        );
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-  ];
-
-  // Try each strategy in sequence
-  for (let i = 0; i < strategies.length; i++) {
-    try {
-      console.log(`PlanReviewTable: Trying strategy ${i + 1} for objective ${objectiveId} initiatives`);
-      const result = await strategies[i]();
-      if (Array.isArray(result) && result.length >= 0) {
-        console.log(`PlanReviewTable: Strategy ${i + 1} succeeded, found ${result.length} initiatives for objective ${objectiveId}`);
+        // Set timeout based on attempt (shorter timeouts on later attempts)
+        const timeout = Math.max(5000, 15000 - (attempt * 3000));
+        
+        const result = await Promise.race([
+          apiCall(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout)
+          )
+        ]);
+        
+        console.log(`${description} - Success on attempt ${attempt}`);
         return result;
-      }
-    } catch (error) {
-      console.warn(`PlanReviewTable: Strategy ${i + 1} failed for objective ${objectiveId}:`, error.message || error);
-      if (i === strategies.length - 1) {
-        console.warn(`PlanReviewTable: All strategies failed for objective ${objectiveId}, returning empty array`);
+      } catch (error) {
+        lastError = error;
+        console.warn(`${description} - Attempt ${attempt} failed:`, error);
+        
+        if (attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          console.log(`${description} - Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
       }
     }
-  }
-
-  return [];
-};
-
-// Helper function to fetch performance measures for an initiative
-const fetchPerformanceMeasuresForInitiative = async (initiativeId: string | number): Promise<any[]> => {
-  const strategies = [
-    // Strategy 1: Standard format
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      
-      try {
-        const response = await api.get(`/performance-measures/?initiative=${initiativeId}&_=${Date.now()}`, {
-          signal: controller.signal,
-          headers: { 'Cache-Control': 'no-cache' }
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    },
     
-    // Strategy 2: Alternative parameter format
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      
-      try {
-        const response = await api.get('/performance-measures/', {
-          params: { initiative_id: initiativeId },
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-  ];
+    console.warn(`${description} - All attempts failed, returning empty data`);
+    throw lastError;
+  },
 
-  for (let i = 0; i < strategies.length; i++) {
+  async getInitiativesForObjective(objectiveId: string): Promise<any[]> {
     try {
-      const result = await strategies[i]();
-      if (Array.isArray(result)) {
-        console.log(`PlanReviewTable: Found ${result.length} performance measures for initiative ${initiativeId}`);
-        return result;
-      }
+      const result = await this.fetchWithRetry(async () => {
+        const timestamp = new Date().getTime();
+        
+        // Try multiple API call strategies
+        try {
+          // Strategy 1: Standard API call
+          return await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        } catch (error1) {
+          console.warn('Strategy 1 failed, trying strategy 2...');
+          
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/strategic-initiatives/', {
+              params: { objective: objectiveId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/strategic-initiatives/`, {
+              params: { objective: objectiveId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
+        }
+      }, `Fetching initiatives for objective ${objectiveId}`);
+      
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
     } catch (error) {
-      console.warn(`PlanReviewTable: Performance measures strategy ${i + 1} failed for initiative ${initiativeId}:`, error.message || error);
+      console.warn(`Failed to fetch initiatives for objective ${objectiveId}:`, error);
+      return [];
+    }
+  },
+
+  async getPerformanceMeasuresForInitiative(initiativeId: string): Promise<any[]> {
+    try {
+      const result = await this.fetchWithRetry(async () => {
+        const timestamp = new Date().getTime();
+        
+        try {
+          // Strategy 1: Standard API call
+          return await api.get(`/performance-measures/?initiative=${initiativeId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        } catch (error1) {
+          console.warn('Performance measures strategy 1 failed, trying strategy 2...');
+          
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/performance-measures/', {
+              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Performance measures strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/performance-measures/`, {
+              params: { initiative: initiativeId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
+        }
+      }, `Fetching performance measures for initiative ${initiativeId}`);
+      
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn(`Failed to fetch performance measures for initiative ${initiativeId}:`, error);
+      return [];
+    }
+  },
+
+  async getMainActivitiesForInitiative(initiativeId: string): Promise<any[]> {
+    try {
+      const result = await this.fetchWithRetry(async () => {
+        const timestamp = new Date().getTime();
+        
+        try {
+          // Strategy 1: Standard API call
+          return await api.get(`/main-activities/?initiative=${initiativeId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        } catch (error1) {
+          console.warn('Main activities strategy 1 failed, trying strategy 2...');
+          
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/main-activities/', {
+              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Main activities strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/main-activities/`, {
+              params: { initiative: initiativeId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
+        }
+      }, `Fetching main activities for initiative ${initiativeId}`);
+      
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn(`Failed to fetch main activities for initiative ${initiativeId}:`, error);
+      return [];
     }
   }
-
-  console.warn(`PlanReviewTable: All performance measures strategies failed for initiative ${initiativeId}`);
-  return [];
-};
-
-// Helper function to fetch main activities for an initiative
-const fetchMainActivitiesForInitiative = async (initiativeId: string | number): Promise<any[]> => {
-  const strategies = [
-    // Strategy 1: Standard format
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      
-      try {
-        const response = await api.get(`/main-activities/?initiative=${initiativeId}&_=${Date.now()}`, {
-          signal: controller.signal,
-          headers: { 'Cache-Control': 'no-cache' }
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    },
-    
-    // Strategy 2: Alternative parameter format
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      
-      try {
-        const response = await api.get('/main-activities/', {
-          params: { initiative_id: initiativeId },
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-  ];
-
-  for (let i = 0; i < strategies.length; i++) {
-    try {
-      const result = await strategies[i]();
-      if (Array.isArray(result)) {
-        console.log(`PlanReviewTable: Found ${result.length} main activities for initiative ${initiativeId}`);
-        return result;
-      }
-    } catch (error) {
-      console.warn(`PlanReviewTable: Main activities strategy ${i + 1} failed for initiative ${initiativeId}:`, error.message || error);
-    }
-  }
-
-  console.warn(`PlanReviewTable: All main activities strategies failed for initiative ${initiativeId}`);
-  return [];
 };
 
 const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
@@ -222,320 +198,78 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
   userOrgId = null,
   isViewOnly = false
 }) => {
-  const { t } = useLanguage();
-  const [processedObjectives, setProcessedObjectives] = useState<StrategicObjective[]>([]);
+  const [processedObjectives, setProcessedObjectives] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentUserOrgId, setCurrentUserOrgId] = useState<number | null>(userOrgId);
+  const [loadingProgress, setLoadingProgress] = useState('');
   const [retryCount, setRetryCount] = useState(0);
-  const [maxRetries] = useState(3);
 
-  // Fetch current user's organization ID if not provided
-  useEffect(() => {
-    const fetchUserData = async () => {
-      if (currentUserOrgId !== null) return;
-      
-      try {
-        const authData = await auth.getCurrentUser();
-        if (authData.userOrganizations && authData.userOrganizations.length > 0) {
-          setCurrentUserOrgId(authData.userOrganizations[0].organization);
-        }
-      } catch (error) {
-        console.error('Failed to fetch user data:', error);
-      }
-    };
-    
-    fetchUserData();
-  }, [currentUserOrgId]);
-
-  // Simple and robust API call function for production
-  const fetchDataRobust = async (url: string, description: string, timeout = 8000) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
-    try {
-      // Ensure fresh auth
-      await auth.getCurrentUser();
-      
-      // Get fresh CSRF token
-      const csrfToken = Cookies.get('csrftoken');
-      
-      const response = await axios.get(url, {
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken || '',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        },
-        withCredentials: true,
-        timeout: timeout - 1000 // Axios timeout slightly less than abort timeout
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (response.data) {
-        console.log(`✅ Successfully fetched ${description}:`, response.data.length || 'data received');
-        return Array.isArray(response.data) ? response.data : (response.data.results || []);
-      }
-      
-      return [];
-    } catch (error) {
-      clearTimeout(timeoutId);
-      console.warn(`⚠️ Failed to fetch ${description}:`, error.message);
+  // Enhanced data fetching for production
+  const fetchCompleteData = async (objectivesList: any[]) => {
+    if (!objectivesList || objectivesList.length === 0) {
+      console.log('No objectives to process');
       return [];
     }
-  };
 
-  // Enhanced data fetching with better error handling for production
-  const fetchInitiativeData = async (initiative: any) => {
-    if (!initiative?.id) {
-      console.warn('Invalid initiative data:', initiative);
-      return {
-        ...initiative,
-        performance_measures: [],
-        main_activities: []
-      };
-    }
+    console.log(`Processing ${objectivesList.length} objectives for complete data`);
+    setLoadingProgress('Initializing data fetch...');
     
-    console.log(`🔄 Fetching data for initiative ${initiative.id}`);
-    
-    try {
-      // Fetch performance measures with multiple strategies
-      let performanceMeasuresData = [];
+    const enrichedObjectives = [];
+
+    for (let i = 0; i < objectivesList.length; i++) {
+      const objective = objectivesList[i];
+      if (!objective) continue;
+
       try {
-        // Strategy 1: Direct API call
-        performanceMeasuresData = await fetchDataRobust(
-          `/api/performance-measures/?initiative=${initiative.id}&_=${Date.now()}`,
-          `performance measures for initiative ${initiative.id}`
+        setLoadingProgress(`Processing objective ${i + 1}/${objectivesList.length}: ${objective.title}`);
+        console.log(`Processing objective ${objective.id} (${objective.title})`);
+
+        // Fetch initiatives for this objective with production-safe API
+        setLoadingProgress(`Fetching initiatives for ${objective.title}...`);
+        const objectiveInitiatives = await productionSafeAPI.getInitiativesForObjective(objective.id.toString());
+        
+        console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
+
+        // Filter initiatives based on user organization
+        const filteredInitiatives = objectiveInitiatives.filter(initiative => 
+          initiative.is_default || 
+          !initiative.organization || 
+          initiative.organization === userOrgId
         );
-        
-        // Strategy 2: If no data, try alternative format
-        if (performanceMeasuresData.length === 0) {
-          performanceMeasuresData = await fetchDataRobust(
-            `/api/performance-measures/?initiative_id=${initiative.id}&_=${Date.now()}`,
-            `performance measures (alt format) for initiative ${initiative.id}`
-          );
-        }
-        
-        // Strategy 3: Use the API service as fallback
-        if (performanceMeasuresData.length === 0) {
-          try {
-            const response = await performanceMeasures.getByInitiative(initiative.id);
-            performanceMeasuresData = response?.data || [];
-          } catch (serviceError) {
-            console.warn(`API service failed for performance measures ${initiative.id}:`, serviceError.message);
-          }
-        }
-      } catch (error) {
-        console.warn(`All performance measures strategies failed for initiative ${initiative.id}:`, error.message);
-        performanceMeasuresData = [];
-      }
-      
-      // Fetch main activities with multiple strategies
-      let mainActivitiesData = [];
-      try {
-        // Strategy 1: Direct API call
-        mainActivitiesData = await fetchDataRobust(
-          `/api/main-activities/?initiative=${initiative.id}&_=${Date.now()}`,
-          `main activities for initiative ${initiative.id}`
-        );
-        
-        // Strategy 2: If no data, try alternative format
-        if (mainActivitiesData.length === 0) {
-          mainActivitiesData = await fetchDataRobust(
-            `/api/main-activities/?initiative_id=${initiative.id}&_=${Date.now()}`,
-            `main activities (alt format) for initiative ${initiative.id}`
-          );
-        }
-        
-        // Strategy 3: Use the API service as fallback
-        if (mainActivitiesData.length === 0) {
-          try {
-            const response = await mainActivities.getByInitiative(initiative.id);
-            mainActivitiesData = response?.data || [];
-          } catch (serviceError) {
-            console.warn(`API service failed for main activities ${initiative.id}:`, serviceError.message);
-          }
-        }
-      } catch (error) {
-        console.warn(`All main activities strategies failed for initiative ${initiative.id}:`, error.message);
-        mainActivitiesData = [];
-      }
-      
-      // Filter data by organization if needed (more permissive in production)
-      const filteredMeasures = currentUserOrgId ? 
-        performanceMeasuresData.filter(measure => 
-          !measure.organization || measure.organization === currentUserOrgId
-        ) : performanceMeasuresData;
-        
-      const filteredActivities = currentUserOrgId ?
-        mainActivitiesData.filter(activity => 
-          !activity.organization || activity.organization === currentUserOrgId
-        ) : mainActivitiesData;
-      
-      console.log(`✅ Initiative ${initiative.id} data fetched:`, {
-        measures: filteredMeasures.length,
-        activities: filteredActivities.length
-      });
-      
-      return {
-        ...initiative,
-        performance_measures: filteredMeasures,
-        main_activities: filteredActivities
-      };
-      
-    } catch (error) {
-      console.error(`❌ Failed to fetch data for initiative ${initiative.id}:`, error);
-      return {
-        ...initiative,
-        performance_measures: [],
-        main_activities: []
-      };
-    }
-  };
 
-  // Process all objectives data
-  const processObjectivesData = async (objectivesList: any[]) => {
-    if (!Array.isArray(objectivesList) || objectivesList.length === 0) {
-      console.warn('No objectives to process');
-      return [];
-    }
+        console.log(`Filtered to ${filteredInitiatives.length} initiatives for user org ${userOrgId}`);
 
-    console.log(`🔄 Processing ${objectivesList.length} objectives...`);
-    
-    const processedObjectives = [];
-    
-    for (const objective of objectivesList) {
-      if (!objective) {
-        console.warn('Skipping null/undefined objective');
-        continue;
-      }
-      
-      console.log(`📋 Processing objective: ${objective.title} (ID: ${objective.id})`);
-      
-      const processedInitiatives = [];
-      
-      if (objective.initiatives && Array.isArray(objective.initiatives)) {
-        console.log(`  📌 Processing ${objective.initiatives.length} initiatives for objective ${objective.id}`);
-        
-        for (const initiative of objective.initiatives) {
-          if (!initiative) {
-            console.warn('  Skipping null/undefined initiative');
-            continue;
-          }
-          
-          console.log(`    🎯 Processing initiative: ${initiative.name} (ID: ${initiative.id})`);
-          
-          try {
-            const enrichedInitiative = await fetchInitiativeData(initiative);
-            processedInitiatives.push(enrichedInitiative);
-            
-            // Small delay between initiatives to prevent overwhelming the server
-            await new Promise(resolve => setTimeout(resolve, 100));
-          } catch (error) {
-            console.error(`    ❌ Failed to process initiative ${initiative.id}:`, error);
-            processedInitiatives.push({
-              ...initiative,
-              performance_measures: [],
-              main_activities: []
-            });
-          }
-        }
-      } else {
-        console.log(`  📌 No initiatives found for objective ${objective.id}`);
-      }
-      
-      processedObjectives.push({
-        ...objective,
-        initiatives: processedInitiatives
-      });
-    }
-    
-    console.log(`✅ Finished processing all objectives. Total: ${processedObjectives.length}`);
-    return processedObjectives;
-  };
-
-  // Enhanced data fetching with production error handling
-  const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
-    if (!objectivesList || !Array.isArray(objectivesList) || objectivesList.length === 0) {
-      console.log('PlanReviewTable: No objectives to process');
-      return [];
-    }
-
-    console.log(`PlanReviewTable: Starting to fetch data for ${objectivesList.length} objectives`);
-    
-    const processedObjectives = [];
-    
-    // Process objectives sequentially to avoid overwhelming the server
-    for (const objective of objectivesList) {
-      if (!objective || !objective.id) {
-        console.warn('PlanReviewTable: Skipping invalid objective');
-        processedObjectives.push({
-          ...objective,
-          initiatives: []
-        });
-        continue;
-      }
-
-      console.log(`PlanReviewTable: Processing objective ${objective.id} (${objective.title})`);
-
-      try {
-        // Fetch initiatives with production-friendly approach
-        const initiativesData = await fetchInitiativesForObjective(objective.id);
-        
-        // Filter initiatives by organization if needed
-        const filteredInitiatives = Array.isArray(initiativesData) ? 
-          initiativesData.filter(initiative => {
-            if (!initiative) return false;
-            
-            // Always include default initiatives
-            if (initiative.is_default) return true;
-            
-            // Include initiatives with no organization (legacy data)
-            if (!initiative.organization) return true;
-            
-            // Include initiatives belonging to current user's organization
-            if (currentUserOrgId && initiative.organization === currentUserOrgId) return true;
-            
-            // In production, be more permissive
-            return !currentUserOrgId;
-          }) : [];
-
-        console.log(`PlanReviewTable: Filtered ${filteredInitiatives.length} initiatives for objective ${objective.id}`);
-
-        // Process each initiative to get its measures and activities
+        // Process each initiative sequentially to avoid overwhelming the server
         const enrichedInitiatives = [];
         
-        for (const initiative of filteredInitiatives) {
-          if (!initiative || !initiative.id) {
-            console.warn(`PlanReviewTable: Skipping invalid initiative for objective ${objective.id}`);
-            continue;
-          }
-
-          console.log(`PlanReviewTable: Processing initiative ${initiative.id} (${initiative.name})`);
+        for (let j = 0; j < filteredInitiatives.length; j++) {
+          const initiative = filteredInitiatives[j];
+          if (!initiative) continue;
 
           try {
-            // Fetch performance measures and main activities
-            const [performanceMeasuresData, mainActivitiesData] = await Promise.all([
-              fetchPerformanceMeasuresForInitiative(initiative.id),
-              fetchMainActivitiesForInitiative(initiative.id)
+            setLoadingProgress(`Processing initiative ${j + 1}/${filteredInitiatives.length}: ${initiative.name}`);
+            console.log(`Processing initiative ${initiative.id} (${initiative.name})`);
+
+            // Fetch performance measures and main activities in parallel but with production-safe API
+            const [performanceMeasuresData, mainActivitiesData] = await Promise.allSettled([
+              productionSafeAPI.getPerformanceMeasuresForInitiative(initiative.id),
+              productionSafeAPI.getMainActivitiesForInitiative(initiative.id)
             ]);
 
-            // Filter by organization if needed
-            const filteredMeasures = Array.isArray(performanceMeasuresData) ?
-              performanceMeasuresData.filter(measure => {
-                if (!measure) return false;
-                return !measure.organization || !currentUserOrgId || measure.organization === currentUserOrgId;
-              }) : [];
+            // Handle results with fallback to empty arrays
+            const measures = performanceMeasuresData.status === 'fulfilled' ? performanceMeasuresData.value : [];
+            const activities = mainActivitiesData.status === 'fulfilled' ? mainActivitiesData.value : [];
 
-            const filteredActivities = Array.isArray(mainActivitiesData) ?
-              mainActivitiesData.filter(activity => {
-                if (!activity) return false;
-                return !activity.organization || !currentUserOrgId || activity.organization === currentUserOrgId;
-              }) : [];
+            // Filter by organization
+            const filteredMeasures = measures.filter(measure =>
+              !measure.organization || measure.organization === userOrgId
+            );
 
-            console.log(`PlanReviewTable: Initiative ${initiative.id} final data: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+            const filteredActivities = activities.filter(activity =>
+              !activity.organization || activity.organization === userOrgId
+            );
+
+            console.log(`Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
             enrichedInitiatives.push({
               ...initiative,
@@ -543,9 +277,14 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
               main_activities: filteredActivities
             });
 
-          } catch (error) {
-            console.warn(`PlanReviewTable: Skipping initiative ${initiative.id} due to error:`, error);
-            // Add initiative without measures/activities rather than failing completely
+            // Small delay between initiatives to prevent server overload
+            if (j < filteredInitiatives.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+          } catch (initiativeError) {
+            console.warn(`Error processing initiative ${initiative.id}:`, initiativeError);
+            // Add initiative with empty data instead of skipping
             enrichedInitiatives.push({
               ...initiative,
               performance_measures: [],
@@ -554,23 +293,28 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
           }
         }
 
-        // Calculate effective weight
+        // Set effective weight
         const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
           ? objective.planner_weight
           : objective.weight;
 
-        console.log(`PlanReviewTable: Objective ${objective.id} final result: ${enrichedInitiatives.length} initiatives`);
-
-        processedObjectives.push({
+        enrichedObjectives.push({
           ...objective,
           effective_weight: effectiveWeight,
           initiatives: enrichedInitiatives
         });
 
-      } catch (error) {
-        console.warn(`PlanReviewTable: Skipping objective ${objective.id} due to error:`, error);
-        // Add objective without initiatives rather than failing completely
-        processedObjectives.push({
+        console.log(`Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+
+        // Small delay between objectives
+        if (i < objectivesList.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+      } catch (objectiveError) {
+        console.warn(`Error processing objective ${objective.id}:`, objectiveError);
+        // Add objective with empty initiatives instead of skipping
+        enrichedObjectives.push({
           ...objective,
           effective_weight: objective.weight,
           initiatives: []
@@ -578,585 +322,559 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
       }
     }
 
-    console.log(`PlanReviewTable: Final result: ${processedObjectives.length} objectives processed`);
-    return processedObjectives;
+    console.log(`=== PROCESSING COMPLETE ===`);
+    console.log(`Successfully processed ${enrichedObjectives.length} objectives`);
+    
+    const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
+    const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
+      sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.performance_measures?.length || 0), 0) || 0), 0);
+    const totalActivities = enrichedObjectives.reduce((sum, obj) => 
+      sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.main_activities?.length || 0), 0) || 0), 0);
+    
+    console.log(`FINAL TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+
+    return enrichedObjectives;
   };
 
-  // Process objectives data when component mounts or data changes
+  // Load complete data when component mounts or objectives change
   useEffect(() => {
+    let isMounted = true;
+
     const loadData = async () => {
-      if (!objectives || !Array.isArray(objectives)) {
-        console.warn('PlanReviewTable: Invalid objectives data');
+      if (!objectives || objectives.length === 0) {
         setProcessedObjectives([]);
         setIsLoading(false);
         return;
       }
-      
-      if (objectives.length === 0) {
-        console.log('PlanReviewTable: No objectives provided');
-        setProcessedObjectives([]);
-        setIsLoading(false);
-        return;
-      }
-      
-      setIsLoading(true);
-      setError(null);
-      
+
       try {
-        const processed = await fetchCompleteObjectiveData(objectives);
-        setProcessedObjectives(processed);
+        setIsLoading(true);
+        setError(null);
+        setLoadingProgress('Starting data fetch...');
+
+        // Ensure authentication
+        try {
+          await auth.getCurrentUser();
+          console.log('Authentication verified for data fetch');
+        } catch (authError) {
+          console.warn('Authentication check failed:', authError);
+          // Continue anyway as some endpoints might not require auth
+        }
+
+        // Fetch complete data with production-safe approach
+        const enrichedObjectives = await fetchCompleteData(objectives);
+        
+        if (isMounted) {
+          setProcessedObjectives(enrichedObjectives);
+          setLoadingProgress(`Completed loading ${enrichedObjectives.length} objectives`);
+        }
       } catch (error) {
-        console.error('❌ Error processing objectives data:', error);
-        setError(`Failed to load plan data: ${error.message}`);
-        setProcessedObjectives([]);
+        console.error('Error loading plan data:', error);
+        if (isMounted) {
+          setError(error instanceof Error ? error.message : 'Failed to load plan data');
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
-    
+
     loadData();
-  }, [objectives, currentUserOrgId, retryCount]);
-  
-  // Retry function
+
+    return () => {
+      isMounted = false;
+    };
+  }, [objectives, userOrgId, retryCount]);
+
   const handleRetry = () => {
-    if (retryCount < maxRetries) {
-      console.log(`🔄 Retrying data fetch (attempt ${retryCount + 1}/${maxRetries})`);
-      setRetryCount(prev => prev + 1);
-      setError(null);
-    }
+    setRetryCount(prev => prev + 1);
+    setError(null);
   };
 
-  // Helper function to format dates
+  const handleExportExcel = () => {
+    const exportData = processDataForExport(processedObjectives, 'en');
+    exportToExcel(
+      exportData,
+      `plan-${new Date().toISOString().slice(0, 10)}`,
+      'en',
+      {
+        organization: organizationName,
+        planner: plannerName,
+        fromDate: fromDate,
+        toDate: toDate,
+        planType: planType
+      }
+    );
+  };
+
+  const handleExportPDF = () => {
+    const exportData = processDataForExport(processedObjectives, 'en');
+    exportToPDF(
+      exportData,
+      `plan-${new Date().toISOString().slice(0, 10)}`,
+      'en',
+      {
+        organization: organizationName,
+        planner: plannerName,
+        fromDate: fromDate,
+        toDate: toDate,
+        planType: planType
+      }
+    );
+  };
+
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString();
+      return format(new Date(dateString), 'MMM d, yyyy');
     } catch (e) {
       return dateString;
     }
   };
 
-  // Helper function to calculate 6-month and 9-month targets
-  const calculateTargets = (item: any) => {
-    if (!item) return { sixMonth: 0, nineMonth: 0 };
-    
-    const targetType = item.target_type || 'cumulative';
-    const q1 = Number(item.q1_target) || 0;
-    const q2 = Number(item.q2_target) || 0;
-    const q3 = Number(item.q3_target) || 0;
-    
-    if (targetType === 'cumulative') {
-      return {
-        sixMonth: q1 + q2,
-        nineMonth: q1 + q2 + q3
-      };
-    } else {
-      return {
-        sixMonth: q2,
-        nineMonth: q3
-      };
-    }
+  const formatCurrency = (value: any): string => {
+    if (!value || value === 'N/A') return '-';
+    const numValue = typeof value === 'string' ? parseFloat(value) : value;
+    if (isNaN(numValue)) return '-';
+    return `$${numValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
-  // Helper function to get budget information
-  const getBudgetInfo = (activity: any) => {
-    if (!activity?.budget) {
-      return {
-        required: 0,
-        government: 0,
-        partners: 0,
-        sdg: 0,
-        other: 0,
-        total: 0,
-        gap: 0
-      };
-    }
+  const calculateTotalBudget = () => {
+    let total = 0;
+    let governmentTotal = 0;
+    let sdgTotal = 0;
+    let partnersTotal = 0;
+    let otherTotal = 0;
 
-    const budget = activity.budget;
-    const required = budget.budget_calculation_type === 'WITH_TOOL' 
-      ? Number(budget.estimated_cost_with_tool || 0)
-      : Number(budget.estimated_cost_without_tool || 0);
-    
-    const government = Number(budget.government_treasury || 0);
-    const partners = Number(budget.partners_funding || 0);
-    const sdg = Number(budget.sdg_funding || 0);
-    const other = Number(budget.other_funding || 0);
-    const total = government + partners + sdg + other;
-    const gap = Math.max(0, required - total);
+    if (!processedObjectives) return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
 
-    return { required, government, partners, sdg, other, total, gap };
-  };
-
-  // Calculate totals for the entire plan
-  const calculatePlanTotals = () => {
-    let totalRequired = 0;
-    let totalGovernment = 0;
-    let totalPartners = 0;
-    let totalSDG = 0;
-    let totalOther = 0;
-    let totalAvailable = 0;
-    let totalGap = 0;
-
-    processedObjectives.forEach(objective => {
-      objective.initiatives?.forEach(initiative => {
-        initiative.main_activities?.forEach(activity => {
-          const budget = getBudgetInfo(activity);
-          totalRequired += budget.required;
-          totalGovernment += budget.government;
-          totalPartners += budget.partners;
-          totalSDG += budget.sdg;
-          totalOther += budget.other;
-          totalAvailable += budget.total;
-          totalGap += budget.gap;
+    try {
+      processedObjectives.forEach((objective: any) => {
+        objective?.initiatives?.forEach((initiative: any) => {
+          initiative?.main_activities?.forEach((activity: any) => {
+            if (!activity?.budget) return;
+            
+            const cost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
+              ? Number(activity.budget.estimated_cost_with_tool || 0) 
+              : Number(activity.budget.estimated_cost_without_tool || 0);
+            
+            total += cost;
+            governmentTotal += Number(activity.budget.government_treasury || 0);
+            sdgTotal += Number(activity.budget.sdg_funding || 0);
+            partnersTotal += Number(activity.budget.partners_funding || 0);
+            otherTotal += Number(activity.budget.other_funding || 0);
+          });
         });
       });
-    });
-
-    return {
-      totalRequired,
-      totalGovernment,
-      totalPartners,
-      totalSDG,
-      totalOther,
-      totalAvailable,
-      totalGap
-    };
-  };
-
-  const planTotals = calculatePlanTotals();
-
-  // Export functions
-  const handleExportExcel = (language: string = 'en') => {
-    if (!processedObjectives || processedObjectives.length === 0) {
-      console.warn('No data available for export');
-      return;
+    } catch (e) {
+      console.error('Error calculating total budget:', e);
     }
-    
-    // Format data for export using the same function as before
-    const dataFormatted = processDataForExport(processedObjectives, language);
-    exportToExcel(
-      dataFormatted,
-      `moh-plan-${new Date().toISOString().slice(0, 10)}`,
-      language,
-      {
-        organization: organizationName,
-        planner: plannerName,
-        fromDate: fromDate,
-        toDate: toDate,
-        planType: planType
-      }
-    );
+
+    return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
   };
 
-  const handleExportPDF = (language: string = 'en') => {
-    if (!processedObjectives || processedObjectives.length === 0) {
-      console.warn('No data available for export');
-      return;
-    }
-    
-    // Format data for export using the same function as before
-    const dataFormatted = processDataForExport(processedObjectives, language);
-    exportToPDF(
-      dataFormatted,
-      `moh-plan-${new Date().toISOString().slice(0, 10)}`,
-      language,
-      {
-        organization: organizationName,
-        planner: plannerName,
-        fromDate: fromDate,
-        toDate: toDate,
-        planType: planType
-      }
-    );
-  };
+  const budgetTotals = calculateTotalBudget();
+  const totalAvailable = budgetTotals.governmentTotal + budgetTotals.sdgTotal + budgetTotals.partnersTotal + budgetTotals.otherTotal;
+  const fundingGap = Math.max(0, budgetTotals.total - totalAvailable);
 
+  // Loading state
   if (isLoading) {
     return (
-      <div className="p-12 text-center">
-        <Loader className="h-10 w-10 mx-auto text-green-500 animate-spin" />
-        <p className="mt-4 text-gray-600 text-lg">Loading complete plan data...</p>
-        <p className="mt-2 text-sm text-gray-500">
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg border border-gray-200">
+        <Loader className="h-10 w-10 text-blue-600 animate-spin mb-4" />
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Plan Data</h3>
+        <p className="text-gray-600 text-center mb-4">{loadingProgress}</p>
+        <div className="w-full max-w-md bg-gray-200 rounded-full h-2">
+          <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: '50%' }}></div>
+        </div>
+        <p className="text-sm text-gray-500 mt-2">
           Fetching objectives, initiatives, performance measures, and activities...
         </p>
       </div>
     );
   }
 
+  // Error state with retry
   if (error) {
     return (
-      <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-center">
-        <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-red-800 mb-2">Error Loading Plan Data</h3>
+      <div className="p-8 bg-red-50 border border-red-200 rounded-lg text-center">
+        <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-red-800 mb-2">Failed to Load Plan Data</h3>
         <p className="text-red-600 mb-4">{error}</p>
-        {retryCount < maxRetries && (
+        <div className="flex justify-center space-x-4">
           <button
             onClick={handleRetry}
-            className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
+            className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 flex items-center"
           >
-            Retry Loading ({retryCount + 1}/{maxRetries})
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry Loading
           </button>
-        )}
-        {retryCount >= maxRetries && (
-          <p className="text-sm text-red-500">
-            Maximum retry attempts reached. Please refresh the page or contact support.
-          </p>
-        )}
+        </div>
       </div>
     );
   }
 
+  // Empty state
   if (!processedObjectives || processedObjectives.length === 0) {
     return (
-      <div className="p-8 text-center bg-yellow-50 rounded-lg border border-yellow-200">
-        <Info className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-yellow-800 mb-2">No Complete Data Available</h3>
-        <p className="text-yellow-700 mb-4">
-          {objectives.length === 0 
-            ? "No objectives were found for this plan. Make sure you've selected at least one objective."
-            : "The objectives exist but don't have complete data (initiatives, measures, or activities). Please add content to your plan first."
-          }
-        </p>
+      <div className="p-8 bg-gray-50 rounded-lg border border-gray-200 text-center">
+        <Target className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-gray-800 mb-2">No Plan Data Available</h3>
+        <p className="text-gray-600">No objectives found to display in the plan table.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Plan Header Information */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Header Info */}
+      <div className="bg-white p-6 rounded-lg border border-gray-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
           <div className="flex items-center">
-            <Building2 className="h-5 w-5 text-gray-400 mr-2" />
+            <Building2 className="h-4 w-4 text-gray-500 mr-2" />
             <div>
-              <p className="text-sm text-gray-500">Organization</p>
+              <p className="text-gray-500">Organization</p>
               <p className="font-medium">{organizationName}</p>
             </div>
           </div>
           <div className="flex items-center">
-            <User className="h-5 w-5 text-gray-400 mr-2" />
+            <User className="h-4 w-4 text-gray-500 mr-2" />
             <div>
-              <p className="text-sm text-gray-500">Planner</p>
+              <p className="text-gray-500">Planner</p>
               <p className="font-medium">{plannerName}</p>
             </div>
           </div>
           <div className="flex items-center">
-            <FileType className="h-5 w-5 text-gray-400 mr-2" />
+            <Calendar className="h-4 w-4 text-gray-500 mr-2" />
             <div>
-              <p className="text-sm text-gray-500">Plan Type</p>
-              <p className="font-medium">{planType}</p>
-            </div>
-          </div>
-          <div className="flex items-center">
-            <Calendar className="h-5 w-5 text-gray-400 mr-2" />
-            <div>
-              <p className="text-sm text-gray-500">Period</p>
+              <p className="text-gray-500">Period</p>
               <p className="font-medium">{formatDate(fromDate)} - {formatDate(toDate)}</p>
             </div>
           </div>
+          <div className="flex items-center">
+            <Target className="h-4 w-4 text-gray-500 mr-2" />
+            <div>
+              <p className="text-gray-500">Plan Type</p>
+              <p className="font-medium">{planType}</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Plan Summary Statistics */}
+      {/* Export buttons */}
+      {!isViewOnly && (
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Export Excel
+          </button>
+          <button
+            onClick={handleExportPDF}
+            className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <FilePdf className="h-4 w-4 mr-2" />
+            Export PDF
+          </button>
+        </div>
+      )}
+
+      {/* Budget Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Objectives</p>
-              <p className="text-2xl font-semibold text-blue-600">{processedObjectives.length}</p>
-            </div>
-            <Target className="h-8 w-8 text-blue-500" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Initiatives</p>
-              <p className="text-2xl font-semibold text-green-600">
-                {processedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0)}
-              </p>
-            </div>
-            <BarChart3 className="h-8 w-8 text-green-500" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Activities</p>
-              <p className="text-2xl font-semibold text-purple-600">
-                {processedObjectives.reduce((sum, obj) => 
-                  sum + (obj.initiatives?.reduce((initSum, init) => 
-                    initSum + (init.main_activities?.length || 0), 0) || 0), 0)}
-              </p>
-            </div>
-            <Activity className="h-8 w-8 text-purple-500" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+        <div className="bg-white p-4 rounded-lg border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Total Budget</p>
-              <p className="text-2xl font-semibold text-green-600">
-                {formatCurrency(planTotals.totalRequired)}
+              <p className="text-2xl font-semibold text-blue-600">{formatCurrency(budgetTotals.total)}</p>
+            </div>
+            <DollarSign className="h-8 w-8 text-blue-600" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Available Funding</p>
+              <p className="text-2xl font-semibold text-green-600">{formatCurrency(totalAvailable)}</p>
+            </div>
+            <CheckCircle className="h-8 w-8 text-green-600" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Funding Gap</p>
+              <p className="text-2xl font-semibold text-red-600">{formatCurrency(fundingGap)}</p>
+            </div>
+            <AlertCircle className="h-8 w-8 text-red-600" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Funding Rate</p>
+              <p className="text-2xl font-semibold text-purple-600">
+                {budgetTotals.total > 0 ? Math.round((totalAvailable / budgetTotals.total) * 100) : 0}%
               </p>
             </div>
-            <DollarSign className="h-8 w-8 text-green-500" />
+            <Activity className="h-8 w-8 text-purple-600" />
           </div>
         </div>
       </div>
 
-      {/* Detailed Plan Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      {/* Plan Table */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+            <thead className="bg-green-600">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategic Objective</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Obj Weight</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategic Initiative</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Init Weight</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Performance Measure/Main Activity</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weight</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Baseline</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q1</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q2</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">6-Month</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q3</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Q4</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Annual</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Implementor</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget Required</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Government</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Partners</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SDG</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Other</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Available</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Gap</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">No.</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Strategic Objective</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Strategic Initiative</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Initiative Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Performance Measure/Main Activity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Weight</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Baseline</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Q1 Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Q2 Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">6-Month Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Q3 Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Q4 Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Annual Target</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Implementor</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Budget Required</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Government</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Partners</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">SDG</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Other</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Total Available</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">Gap</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                let rowNumber = 1;
+                const effectiveWeight = objective.effective_weight || objective.planner_weight || objective.weight;
+                let objectiveRowSpan = 0;
+                
+                // Calculate total rows for this objective
+                objective.initiatives?.forEach((initiative: any) => {
+                  const measuresCount = initiative.performance_measures?.length || 0;
+                  const activitiesCount = initiative.main_activities?.length || 0;
+                  const totalItems = Math.max(1, measuresCount + activitiesCount);
+                  objectiveRowSpan += totalItems;
+                });
+                
+                if (objectiveRowSpan === 0) objectiveRowSpan = 1;
+
+                let currentRow = 0;
                 const rows: JSX.Element[] = [];
-                
-                // Track if we've shown the objective info
-                let objectiveShown = false;
-                
+
                 if (!objective.initiatives || objective.initiatives.length === 0) {
-                  // Show objective without initiatives
+                  // Objective with no initiatives
                   rows.push(
                     <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
                       <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objective.effective_weight || objective.weight}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{effectiveWeight}%</td>
                       <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">-</td>
                     </tr>
                   );
-                  objectiveShown = true;
+                } else {
+                  objective.initiatives.forEach((initiative: any, initIndex: number) => {
+                    const performanceMeasures = initiative.performance_measures || [];
+                    const mainActivities = initiative.main_activities || [];
+                    const allItems = [...performanceMeasures, ...mainActivities];
+                    
+                    if (allItems.length === 0) {
+                      // Initiative with no measures or activities
+                      const isFirstRowForObjective = currentRow === 0;
+                      rows.push(
+                        <tr key={`init-${initiative.id}-empty`} className="hover:bg-gray-50">
+                          {isFirstRowForObjective && (
+                            <>
+                              <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                {objIndex + 1}
+                              </td>
+                              <td rowSpan={objectiveRowSpan} className="px-6 py-4 text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                <div className="font-medium">{objective.title}</div>
+                                {objective.description && (
+                                  <div className="text-xs text-gray-500 mt-1">{objective.description}</div>
+                                )}
+                              </td>
+                              <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                {effectiveWeight}%
+                              </td>
+                            </>
+                          )}
+                          <td className="px-6 py-4 text-sm text-gray-900">{initiative.name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.weight}%</td>
+                          <td className="px-6 py-4 text-sm text-gray-500 italic">No measures or activities</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">{initiative.organization_name || '-'}</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                          <td className="px-6 py-4 text-sm text-gray-500">-</td>
+                        </tr>
+                      );
+                      currentRow++;
+                    } else {
+                      allItems.forEach((item: any, itemIndex: number) => {
+                        const isFirstRowForObjective = currentRow === 0;
+                        const isFirstRowForInitiative = itemIndex === 0;
+                        const initiativeRowSpan = allItems.length;
+                        const isPerformanceMeasure = performanceMeasures.includes(item);
+                        
+                        // Calculate budget values
+                        let budgetRequired = 0;
+                        let government = 0;
+                        let partners = 0;
+                        let sdg = 0;
+                        let other = 0;
+                        let totalAvailable = 0;
+                        let gap = 0;
+                        
+                        if (!isPerformanceMeasure && item.budget) {
+                          budgetRequired = item.budget.budget_calculation_type === 'WITH_TOOL' ? 
+                            Number(item.budget.estimated_cost_with_tool || 0) : 
+                            Number(item.budget.estimated_cost_without_tool || 0);
+                          
+                          government = Number(item.budget.government_treasury || 0);
+                          partners = Number(item.budget.partners_funding || 0);
+                          sdg = Number(item.budget.sdg_funding || 0);
+                          other = Number(item.budget.other_funding || 0);
+                          totalAvailable = government + partners + sdg + other;
+                          gap = Math.max(0, budgetRequired - totalAvailable);
+                        }
+                        
+                        // Calculate 6-month target
+                        const sixMonthTarget = item.target_type === 'cumulative' 
+                          ? Number(item.q1_target || 0) + Number(item.q2_target || 0) 
+                          : Number(item.q2_target || 0);
+
+                        rows.push(
+                          <tr key={`${item.id}-${itemIndex}`} className="hover:bg-gray-50">
+                            {isFirstRowForObjective && (
+                              <>
+                                <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                  {objIndex + 1}
+                                </td>
+                                <td rowSpan={objectiveRowSpan} className="px-6 py-4 text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                  <div className="font-medium">{objective.title}</div>
+                                  {objective.description && (
+                                    <div className="text-xs text-gray-500 mt-1">{objective.description}</div>
+                                  )}
+                                </td>
+                                <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
+                                  {effectiveWeight}%
+                                </td>
+                              </>
+                            )}
+                            {isFirstRowForInitiative && (
+                              <>
+                                <td rowSpan={initiativeRowSpan} className="px-6 py-4 text-sm text-gray-900 border-r border-gray-200 bg-blue-50">
+                                  <div className="font-medium">{initiative.name}</div>
+                                </td>
+                                <td rowSpan={initiativeRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-blue-50">
+                                  {initiative.weight}%
+                                </td>
+                              </>
+                            )}
+                            <td className="px-6 py-4 text-sm text-gray-900">
+                              <div className="flex items-center">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mr-2 ${
+                                  isPerformanceMeasure ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'
+                                }`}>
+                                  {isPerformanceMeasure ? 'PM' : 'MA'}
+                                </span>
+                                {item.name}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.weight}%</td>
+                            <td className="px-6 py-4 text-sm text-gray-900">{item.baseline || '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q1_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q2_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{sixMonthTarget}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q3_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q4_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.annual_target || 0}</td>
+                            <td className="px-6 py-4 text-sm text-gray-900">{initiative.organization_name || '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budgetRequired)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(government)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(partners)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(sdg)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(other)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(totalAvailable)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(gap)}</td>
+                          </tr>
+                        );
+                        currentRow++;
+                      });
+                    }
+                  });
                 }
 
-                objective.initiatives?.forEach((initiative, initIndex) => {
-                  // Track if we've shown the initiative info
-                  let initiativeShown = false;
-                  
-                  // Process performance measures
-                  initiative.performance_measures?.forEach((measure, measureIndex) => {
-                    const targets = calculateTargets(measure);
-                    
-                    rows.push(
-                      <tr key={`measure-${measure.id}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? objIndex + 1 : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {!objectiveShown ? objective.title : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {!initiativeShown ? initiative.name : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!initiativeShown ? `${initiative.weight}%` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
-                            PM
-                          </span>
-                          {measure.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.weight}%</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.baseline || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q1_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q2_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{targets.sixMonth}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q3_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.q4_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{measure.annual_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!initiativeShown ? (initiative.organization_name || '-') : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      </tr>
-                    );
-                    
-                    objectiveShown = true;
-                    initiativeShown = true;
-                  });
-                  
-                  // Process main activities
-                  initiative.main_activities?.forEach((activity, activityIndex) => {
-                    const targets = calculateTargets(activity);
-                    const budget = getBudgetInfo(activity);
-                    
-                    rows.push(
-                      <tr key={`activity-${activity.id}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? objIndex + 1 : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {!objectiveShown ? objective.title : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {!initiativeShown ? initiative.name : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!initiativeShown ? `${initiative.weight}%` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-2">
-                            MA
-                          </span>
-                          {activity.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.weight}%</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.baseline || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q1_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q2_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{targets.sixMonth}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q3_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.q4_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.annual_target}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!initiativeShown ? (initiative.organization_name || '-') : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.required)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.government)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.partners)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.sdg)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.other)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budget.total)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          <span className={`${budget.gap > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {formatCurrency(budget.gap)}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                    
-                    objectiveShown = true;
-                    initiativeShown = true;
-                  });
-                  
-                  // If initiative has no measures or activities, show the initiative itself
-                  if ((!initiative.performance_measures || initiative.performance_measures.length === 0) &&
-                      (!initiative.main_activities || initiative.main_activities.length === 0)) {
-                    rows.push(
-                      <tr key={`init-${initiative.id}-empty`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? objIndex + 1 : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {!objectiveShown ? objective.title : ''}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {!objectiveShown ? `${objective.effective_weight || objective.weight}%` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">{initiative.name}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.weight}%</td>
-                        <td className="px-6 py-4 text-sm text-gray-500 italic">No measures or activities</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.organization_name || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                      </tr>
-                    );
-                    objectiveShown = true;
-                  }
-                });
-                
                 return rows;
               })}
               
-              {/* Totals Row */}
+              {/* Summary Row */}
               <tr className="bg-blue-50 border-t-2 border-blue-200">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900" colSpan={15}>
+                <td colSpan={15} className="px-6 py-4 text-sm font-medium text-gray-900 text-right">
                   TOTAL BUDGET
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalRequired)}
+                  {formatCurrency(budgetTotals.total)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalGovernment)}
+                  {formatCurrency(budgetTotals.governmentTotal)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalPartners)}
+                  {formatCurrency(budgetTotals.partnersTotal)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalSDG)}
+                  {formatCurrency(budgetTotals.sdgTotal)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalOther)}
+                  {formatCurrency(budgetTotals.otherTotal)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  {formatCurrency(planTotals.totalAvailable)}
+                  {formatCurrency(totalAvailable)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                  <span className={planTotals.totalGap > 0 ? 'text-red-600' : 'text-green-600'}>
-                    {formatCurrency(planTotals.totalGap)}
-                  </span>
+                  {formatCurrency(fundingGap)}
                 </td>
               </tr>
             </tbody>
@@ -1164,94 +882,21 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
         </div>
       </div>
 
-      {/* Budget Summary */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Budget Summary</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="text-center p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm text-gray-500">Total Required</p>
-            <p className="text-xl font-semibold text-blue-600">{formatCurrency(planTotals.totalRequired)}</p>
-          </div>
-          <div className="text-center p-4 bg-green-50 rounded-lg">
-            <p className="text-sm text-gray-500">Total Available</p>
-            <p className="text-xl font-semibold text-green-600">{formatCurrency(planTotals.totalAvailable)}</p>
-          </div>
-          <div className="text-center p-4 bg-yellow-50 rounded-lg">
-            <p className="text-sm text-gray-500">Funding Rate</p>
-            <p className="text-xl font-semibold text-yellow-600">
-              {planTotals.totalRequired > 0 
-                ? `${Math.round((planTotals.totalAvailable / planTotals.totalRequired) * 100)}%`
-                : '0%'}
-            </p>
-          </div>
-          <div className="text-center p-4 bg-red-50 rounded-lg">
-            <p className="text-sm text-gray-500">Funding Gap</p>
-            <p className="text-xl font-semibold text-red-600">{formatCurrency(planTotals.totalGap)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Export Buttons - Only show if not in preview mode and not view-only */}
-      {!isPreviewMode && !isViewOnly && processedObjectives && processedObjectives.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Export Plan</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <button
-              onClick={() => handleExportExcel('en')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-            >
-              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
-              Export Excel (EN)
-            </button>
-            
-            <button
-              onClick={() => handleExportExcel('am')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-            >
-              <FileSpreadsheet className="h-5 w-5 mr-2 text-green-600" />
-              Export Excel (አማርኛ)
-            </button>
-            
-            <button
-              onClick={() => handleExportPDF('en')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <Download className="h-5 w-5 mr-2 text-blue-600" />
-              Export PDF (EN)
-            </button>
-            
-            <button
-              onClick={() => handleExportPDF('am')}
-              className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <Download className="h-5 w-5 mr-2 text-blue-600" />
-              Export PDF (አማርኛ)
-            </button>
-          </div>
-          <p className="mt-3 text-sm text-gray-500">
-            Export your complete plan data in Excel or PDF format. Choose English or Amharic language for the export.
-          </p>
-        </div>
-      )}
-
-      {/* Submit Button (only show if not in preview mode and not view-only) */}
+      {/* Submit Button */}
       {!isPreviewMode && !isViewOnly && (
         <div className="flex justify-end">
           <button
             onClick={onSubmit}
             disabled={isSubmitting}
-            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+            className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
           >
             {isSubmitting ? (
               <>
-                <Loader className="h-5 w-5 mr-2 animate-spin" />
+                <Loader className="h-4 w-4 mr-2 animate-spin" />
                 Submitting Plan...
               </>
             ) : (
-              <>
-                <CheckCircle className="h-5 w-5 mr-2" />
-                Submit Plan for Review
-              </>
+              'Submit Plan for Review'
             )}
           </button>
         </div>
