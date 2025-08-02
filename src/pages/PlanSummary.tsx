@@ -484,9 +484,19 @@ const PlanSummary: React.FC = () => {
                   ? 'bg-blue-50 text-blue-700 border-blue-300' 
                   : 'text-gray-700 bg-white hover:bg-gray-50'
               }`}
+              disabled={isEnrichingData}
             >
-              <ClipboardCheck className="h-4 w-4 mr-2" />
-              {showTableView ? 'Hide Table View' : 'Show Table View'}
+              {isEnrichingData ? (
+                <>
+                  <Loader className="h-4 w-4 mr-2 animate-spin" />
+                  Loading Table Data...
+                </>
+              ) : (
+                <>
+                  <ClipboardCheck className="h-4 w-4 mr-2" />
+                  {showTableView ? 'Hide Table View' : 'Show Table View'}
+                </>
+              )}
             </button>
             
             {processedPlanData.status === 'SUBMITTED' && (
