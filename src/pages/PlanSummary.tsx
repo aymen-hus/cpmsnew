@@ -25,299 +25,8 @@ import { format } from 'date-fns';
 import { isEvaluator } from '../types/user';
 import PlanReviewTable from '../components/PlanReviewTable';
 
-// Production-safe API helper with comprehensive retry logic - EXACT COPY FROM PlanReviewTable
-const productionSafeAPI = {
-  async fetchWithRetry(apiCall: () => Promise<any>, description: string, maxRetries = 3): Promise<any> {
-    let lastError;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`${description} - Attempt ${attempt}/${maxRetries}`);
-        
-        // Set timeout based on attempt (shorter timeouts on later attempts)
-        const timeout = Math.max(5000, 15000 - (attempt * 3000));
-        
-        const result = await Promise.race([
-          apiCall(),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout)
-          )
-        ]);
-        
-        console.log(`${description} - Success on attempt ${attempt}`);
-        return result;
-      } catch (error) {
-        lastError = error;
-        console.warn(`${description} - Attempt ${attempt} failed:`, error);
-        
-        if (attempt < maxRetries) {
-          // Wait before retry with exponential backoff
-          const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-          console.log(`${description} - Waiting ${waitTime}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-      }
-    }
-    
-    console.warn(`${description} - All attempts failed, returning empty data`);
-    throw lastError;
-  },
-
-  async getInitiativesForObjective(objectiveId: string): Promise<any[]> {
-    try {
-      const result = await this.fetchWithRetry(async () => {
-        const timestamp = new Date().getTime();
-        
-        // Try multiple API call strategies
-        try {
-          // Strategy 1: Standard API call
-          return await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`, {
-            timeout: 10000,
-            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-          });
-        } catch (error1) {
-          console.warn('Strategy 1 failed, trying strategy 2...');
-          
-          try {
-            // Strategy 2: Alternative parameter format
-            return await api.get('/strategic-initiatives/', {
-              params: { objective: objectiveId, _: timestamp },
-              timeout: 8000,
-              headers: { 'Cache-Control': 'no-cache' }
-            });
-          } catch (error2) {
-            console.warn('Strategy 2 failed, trying strategy 3...');
-            
-            // Strategy 3: Direct axios call
-            return await axios.get(`/api/strategic-initiatives/`, {
-              params: { objective: objectiveId },
-              timeout: 5000,
-              withCredentials: true
-            });
-          }
-        }
-      }, `Fetching initiatives for objective ${objectiveId}`);
-      
-      const data = result?.data?.results || result?.data || [];
-      return Array.isArray(data) ? data : [];
-    } catch (error) {
-      console.warn(`Failed to fetch initiatives for objective ${objectiveId}:`, error);
-      return [];
-    }
-  },
-
-  async getPerformanceMeasuresForInitiative(initiativeId: string): Promise<any[]> {
-    try {
-      const result = await this.fetchWithRetry(async () => {
-        const timestamp = new Date().getTime();
-        
-        try {
-          // Strategy 1: Standard API call
-          return await api.get(`/performance-measures/?initiative=${initiativeId}&_=${timestamp}`, {
-            timeout: 10000,
-            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-          });
-        } catch (error1) {
-          console.warn('Performance measures strategy 1 failed, trying strategy 2...');
-          
-          try {
-            // Strategy 2: Alternative parameter format
-            return await api.get('/performance-measures/', {
-              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
-              timeout: 8000,
-              headers: { 'Cache-Control': 'no-cache' }
-            });
-          } catch (error2) {
-            console.warn('Performance measures strategy 2 failed, trying strategy 3...');
-            
-            // Strategy 3: Direct axios call
-            return await axios.get(`/api/performance-measures/`, {
-              params: { initiative: initiativeId },
-              timeout: 5000,
-              withCredentials: true
-            });
-          }
-        }
-      }, `Fetching performance measures for initiative ${initiativeId}`);
-      
-      const data = result?.data?.results || result?.data || [];
-      return Array.isArray(data) ? data : [];
-    } catch (error) {
-      console.warn(`Failed to fetch performance measures for initiative ${initiativeId}:`, error);
-      return [];
-    }
-  },
-
-  async getMainActivitiesForInitiative(initiativeId: string): Promise<any[]> {
-    try {
-      const result = await this.fetchWithRetry(async () => {
-        const timestamp = new Date().getTime();
-        
-        try {
-          // Strategy 1: Standard API call
-          return await api.get(`/main-activities/?initiative=${initiativeId}&_=${timestamp}`, {
-            timeout: 10000,
-            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-          });
-        } catch (error1) {
-          console.warn('Main activities strategy 1 failed, trying strategy 2...');
-          
-          try {
-            // Strategy 2: Alternative parameter format
-            return await api.get('/main-activities/', {
-              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
-              timeout: 8000,
-              headers: { 'Cache-Control': 'no-cache' }
-            });
-          } catch (error2) {
-            console.warn('Main activities strategy 2 failed, trying strategy 3...');
-            
-            // Strategy 3: Direct axios call
-            return await axios.get(`/api/main-activities/`, {
-              params: { initiative: initiativeId },
-              timeout: 5000,
-              withCredentials: true
-            });
-          }
-        }
-      }, `Fetching main activities for initiative ${initiativeId}`);
-      
-      const data = result?.data?.results || result?.data || [];
-      return Array.isArray(data) ? data : [];
-    } catch (error) {
-      console.warn(`Failed to fetch main activities for initiative ${initiativeId}:`, error);
-      return [];
-    }
-  }
-};
-
-// EXACT COPY of fetchCompleteData from PlanReviewTable
-const fetchCompleteData = async (objectivesList: any[], userOrgId: number | null) => {
-  if (!objectivesList || objectivesList.length === 0) {
-    console.log('No objectives to process');
-    return [];
-  }
-
-  console.log(`Processing ${objectivesList.length} objectives for complete data`);
-  
-  const enrichedObjectives = [];
-
-  for (let i = 0; i < objectivesList.length; i++) {
-    const objective = objectivesList[i];
-    if (!objective) continue;
-
-    try {
-      console.log(`Processing objective ${objective.id} (${objective.title})`);
-
-      // Fetch initiatives for this objective with production-safe API
-      const objectiveInitiatives = await productionSafeAPI.getInitiativesForObjective(objective.id.toString());
-      
-      console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
-
-      // Filter initiatives based on user organization
-      const filteredInitiatives = objectiveInitiatives.filter(initiative => 
-        initiative.is_default || 
-        !initiative.organization || 
-        initiative.organization === userOrgId
-      );
-
-      console.log(`Filtered to ${filteredInitiatives.length} initiatives for user org ${userOrgId}`);
-
-      // Process each initiative sequentially to avoid overwhelming the server
-      const enrichedInitiatives = [];
-      
-      for (let j = 0; j < filteredInitiatives.length; j++) {
-        const initiative = filteredInitiatives[j];
-        if (!initiative) continue;
-
-        try {
-          console.log(`Processing initiative ${initiative.id} (${initiative.name})`);
-
-          // Fetch performance measures and main activities in parallel but with production-safe API
-          const [performanceMeasuresData, mainActivitiesData] = await Promise.allSettled([
-            productionSafeAPI.getPerformanceMeasuresForInitiative(initiative.id),
-            productionSafeAPI.getMainActivitiesForInitiative(initiative.id)
-          ]);
-
-          // Handle results with fallback to empty arrays
-          const measures = performanceMeasuresData.status === 'fulfilled' ? performanceMeasuresData.value : [];
-          const activities = mainActivitiesData.status === 'fulfilled' ? mainActivitiesData.value : [];
-
-          // Filter by organization
-          const filteredMeasures = measures.filter(measure =>
-            !measure.organization || measure.organization === userOrgId
-          );
-
-          const filteredActivities = activities.filter(activity =>
-            !activity.organization || activity.organization === userOrgId
-          );
-
-          console.log(`Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
-
-          enrichedInitiatives.push({
-            ...initiative,
-            performance_measures: filteredMeasures,
-            main_activities: filteredActivities
-          });
-
-          // Small delay between initiatives to prevent server overload
-          if (j < filteredInitiatives.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-
-        } catch (initiativeError) {
-          console.warn(`Error processing initiative ${initiative.id}:`, initiativeError);
-          // Add initiative with empty data instead of skipping
-          enrichedInitiatives.push({
-            ...initiative,
-            performance_measures: [],
-            main_activities: []
-          });
-        }
-      }
-
-      // Set effective weight
-      const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
-        ? objective.planner_weight
-        : objective.weight;
-
-      enrichedObjectives.push({
-        ...objective,
-        effective_weight: effectiveWeight,
-        initiatives: enrichedInitiatives
-      });
-
-      console.log(`Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
-
-      // Small delay between objectives
-      if (i < objectivesList.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-
-    } catch (objectiveError) {
-      console.warn(`Error processing objective ${objective.id}:`, objectiveError);
-      // Add objective with empty initiatives instead of skipping
-      enrichedObjectives.push({
-        ...objective,
-        effective_weight: objective.weight,
-        initiatives: []
-      });
-    }
-  }
-
-  console.log(`=== PROCESSING COMPLETE ===`);
-  console.log(`Successfully processed ${enrichedObjectives.length} objectives`);
-  
-  const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
-  const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
-    sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.performance_measures?.length || 0), 0) || 0), 0);
-  const totalActivities = enrichedObjectives.reduce((sum, obj) => 
-    sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.main_activities?.length || 0), 0) || 0), 0);
-  
-  console.log(`FINAL TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
-
-  return enrichedObjectives;
-};
+  // Use the same working fetchCompleteData function from PlanReviewTable
+  const { fetchCompleteData } = await import('../components/PlanReviewTable');
 
 const PlanSummary: React.FC = () => {
   const { planId } = useParams<{ planId: string }>();
@@ -388,36 +97,55 @@ const PlanSummary: React.FC = () => {
 
   // Function to handle showing the table view with complete data
   const handleShowTableView = async (forceRefresh = false) => {
+    console.log('=== STARTING TABLE VIEW DATA FETCH ===');
+    console.log('Plan data objectives:', planData?.objectives?.length || 0);
+    console.log('User organization ID:', userOrgId);
+    
     if (!planData?.objectives || planData.objectives.length === 0) {
       setEnrichError('No objectives found in the plan to display');
       return;
     }
     
-    // Reset state for fresh loading
-    if (forceRefresh || !hasAttemptedEnrichment) {
-      setEnrichedObjectives([]);
-      setHasAttemptedEnrichment(true);
-    }
-    
     setIsEnriching(true);
     setEnrichError(null);
-    setEnrichProgress('Starting complete data fetch...');
+    setEnrichedObjectives([]);
+    setEnrichProgress('Starting comprehensive data fetch...');
     
     try {
-      console.log('Starting comprehensive data fetch for table view');
-      console.log('Plan objectives:', planData.objectives.map(obj => ({ id: obj.id, title: obj.title })));
-      console.log('User organization ID:', userOrgId);
-
-      // Use the EXACT same function as PlanReviewTable
-      const enrichedObjectives = await fetchCompleteData(planData.objectives, userOrgId);
+      // Import the exact same functions from PlanReviewTable
+      const { fetchCompleteData, productionSafeAPI } = await import('../components/PlanReviewTable');
       
-      console.log('Complete data fetch finished:', enrichedObjectives.length);
-      setEnrichedObjectives(enrichedObjectives);
-      setEnrichProgress(`Completed loading ${enrichedObjectives.length} objectives`);
+      console.log('Successfully imported fetchCompleteData from PlanReviewTable');
+      console.log('Processing objectives:', planData.objectives.map(obj => ({ 
+        id: obj.id, 
+        title: obj.title,
+        weight: obj.weight,
+        planner_weight: obj.planner_weight 
+      })));
+
+      // Use the EXACT same function from PlanReviewTable
+      setEnrichProgress('Fetching complete data using PlanReviewTable logic...');
+      const enrichedData = await fetchCompleteData(planData.objectives, userOrgId);
+      
+      console.log('=== FETCH COMPLETE ===');
+      console.log('Enriched objectives:', enrichedData.length);
+      
+      // Log details for debugging
+      enrichedData.forEach((obj, index) => {
+        console.log(`Objective ${index + 1}: ${obj.title} - Initiatives: ${obj.initiatives?.length || 0}`);
+        obj.initiatives?.forEach((init, initIndex) => {
+          console.log(`  Initiative ${initIndex + 1}: ${init.name} - Measures: ${init.performance_measures?.length || 0}, Activities: ${init.main_activities?.length || 0}`);
+        });
+      });
+      
+      setEnrichedObjectives(enrichedData);
+      setEnrichProgress(`Successfully loaded complete data for ${enrichedData.length} objectives`);
       setShowPreview(true);
+      setHasAttemptedEnrichment(true);
     } catch (error) {
-      console.error('Error loading complete plan data:', error);
-      setEnrichError(error instanceof Error ? error.message : 'Failed to load complete plan data');
+      console.error('=== ERROR IN TABLE VIEW FETCH ===');
+      console.error('Error details:', error);
+      setEnrichError(error instanceof Error ? error.message : 'Failed to load complete plan data. Please try again.');
     } finally {
       setIsEnriching(false);
     }
