@@ -197,47 +197,149 @@ const PlanSummary: React.FC = () => {
         setEnrichmentProgress(`Processing objective ${i + 1}/${objectivesList.length}: ${objective.title}`);
         console.log(`Enriching objective ${objective.id} (${objective.title})`);
 
-        // Fetch initiatives for this objective with multiple strategies
-        let objectiveInitiatives = [];
+        // Fetch ALL initiatives for this objective using comprehensive approach
+        setEnrichmentProgress(`Fetching ALL initiatives for ${objective.title}...`);
+        console.log(`Fetching ALL initiatives for objective ${objective.id} (${objective.title})`);
         
+        let allObjectiveInitiatives = [];
+        
+        // Method 1: Direct objective initiatives with multiple strategies
         try {
-          // Strategy 1: Use existing API function
-          const initiativesResponse = await initiatives.getByObjective(objective.id.toString());
-          objectiveInitiatives = initiativesResponse?.data || [];
-          console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id} (Strategy 1)`);
-        } catch (error1) {
-          console.warn(`Strategy 1 failed for objective ${objective.id}:`, error1);
+          console.log(`Method 1: Direct initiatives for objective ${objective.id}`);
           
+          // Try multiple API call formats for better production compatibility
+          let directInitiatives = [];
+          
+          // Strategy 1a: Standard API call
           try {
-            // Strategy 2: Direct API call with different parameters
-            const response = await axios.get(`/api/strategic-initiatives/`, {
-              params: { strategic_objective: objective.id },
-              timeout: 8000,
-              withCredentials: true
-            });
-            objectiveInitiatives = response.data?.results || response.data || [];
-            console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id} (Strategy 2)`);
-          } catch (error2) {
-            console.warn(`Strategy 2 failed for objective ${objective.id}:`, error2);
+            const response1 = await initiatives.getByObjective(objective.id.toString());
+            directInitiatives = response1?.data || [];
+            console.log(`Strategy 1a: Found ${directInitiatives.length} direct initiatives`);
+          } catch (error1a) {
+            console.warn('Strategy 1a failed:', error1a);
             
+            // Strategy 1b: Alternative parameter format
             try {
-              // Strategy 3: Alternative parameter format
-              const response = await axios.get(`/api/strategic-initiatives/`, {
-                params: { objective_id: objective.id },
-                timeout: 5000,
+              const response1b = await axios.get('/api/strategic-initiatives/', {
+                params: { 
+                  strategic_objective: objective.id,
+                  _t: Date.now()
+                },
+                timeout: 12000,
                 withCredentials: true
               });
-              objectiveInitiatives = response.data?.results || response.data || [];
-              console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id} (Strategy 3)`);
-            } catch (error3) {
-              console.warn(`All strategies failed for objective ${objective.id}, using empty array`);
-              objectiveInitiatives = [];
+              directInitiatives = response1b.data?.results || response1b.data || [];
+              console.log(`Strategy 1b: Found ${directInitiatives.length} direct initiatives`);
+            } catch (error1b) {
+              console.warn('Strategy 1b failed:', error1b);
+              
+              // Strategy 1c: Simple parameter format
+              try {
+                const response1c = await axios.get('/api/strategic-initiatives/', {
+                  params: { objective: objective.id },
+                  timeout: 8000,
+                  withCredentials: true
+                });
+                directInitiatives = response1c.data?.results || response1c.data || [];
+                console.log(`Strategy 1c: Found ${directInitiatives.length} direct initiatives`);
+              } catch (error1c) {
+                console.warn('All direct initiative strategies failed:', error1c);
+                directInitiatives = [];
+              }
+            }
+          }
+          
+          allObjectiveInitiatives = [...directInitiatives];
+          console.log(`Total after Method 1: ${allObjectiveInitiatives.length} initiatives`);
+          
+        } catch (method1Error) {
+          console.error('Method 1 completely failed:', method1Error);
+        }
+        
+        // Method 2: Get ALL initiatives and filter by objective
+        try {
+          console.log(`Method 2: Filter all initiatives for objective ${objective.id}`);
+          
+          const allInitiativesResponse = await initiatives.getAll();
+          const allInitiatives = allInitiativesResponse?.data || [];
+          console.log(`Method 2: Got ${allInitiatives.length} total initiatives to filter`);
+          
+          // Filter initiatives that belong to this objective
+          const objectiveRelatedInitiatives = allInitiatives.filter(initiative => {
+            // Direct objective relationship
+            const matchesObjective = initiative.strategic_objective && 
+                    initiative.strategic_objective.toString() === objective.id.toString();
+            
+            // Program relationship - check if initiative's program belongs to this objective
+            const matchesProgram = initiative.program && objective.programs && Array.isArray(objective.programs) &&
+                    objective.programs.some(program => 
+                      program.id.toString() === initiative.program.toString()
+                    );
+            
+            return matchesObjective || matchesProgram;
+          });
+          
+          console.log(`Method 2: Found ${objectiveRelatedInitiatives.length} related initiatives from all initiatives`);
+          
+          // Merge with direct initiatives, avoiding duplicates
+          objectiveRelatedInitiatives.forEach(relatedInitiative => {
+            if (!allObjectiveInitiatives.find(existing => existing.id === relatedInitiative.id)) {
+              allObjectiveInitiatives.push(relatedInitiative);
+            }
+          });
+          
+          console.log(`Total after Method 2: ${allObjectiveInitiatives.length} initiatives`);
+          
+        } catch (method2Error) {
+          console.error('Method 2 failed:', method2Error);
+        }
+        
+        // Method 3: Fetch initiatives for each program under this objective
+        if (objective.programs && Array.isArray(objective.programs)) {
+          for (const program of objective.programs) {
+            try {
+              console.log(`Method 3: Fetching initiatives for program ${program.id} under objective ${objective.id}`);
+              
+              let programInitiatives = [];
+              
+              // Try multiple strategies for program initiatives
+              try {
+                const programResponse = await initiatives.getByProgram(program.id.toString());
+                programInitiatives = programResponse?.data || [];
+                console.log(`Method 3a: Found ${programInitiatives.length} initiatives for program ${program.id}`);
+              } catch (program3aError) {
+                console.warn(`Program strategy 3a failed for program ${program.id}:`, program3aError);
+                
+                try {
+                  const programResponse = await axios.get('/api/strategic-initiatives/', {
+                    params: { program: program.id },
+                    timeout: 8000,
+                    withCredentials: true
+                  });
+                  programInitiatives = programResponse.data?.results || programResponse.data || [];
+                  console.log(`Method 3b: Found ${programInitiatives.length} initiatives for program ${program.id}`);
+                } catch (program3bError) {
+                  console.warn(`Program strategy 3b failed for program ${program.id}:`, program3bError);
+                }
+              }
+              
+              // Add program initiatives to the list, avoiding duplicates
+              programInitiatives.forEach(programInitiative => {
+                if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
+                  allObjectiveInitiatives.push(programInitiative);
+                }
+              });
+              
+            } catch (programError) {
+              console.error(`Error fetching initiatives for program ${program.id}:`, programError);
             }
           }
         }
+        
+        console.log(`FINAL TOTAL initiatives found for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
 
         // Filter initiatives based on user organization
-        const filteredInitiatives = objectiveInitiatives.filter(initiative => 
+        const filteredInitiatives = allObjectiveInitiatives.filter(initiative => 
           initiative.is_default || 
           !initiative.organization || 
           initiative.organization === userOrgId
@@ -256,62 +358,110 @@ const PlanSummary: React.FC = () => {
             setEnrichmentProgress(`Processing initiative ${j + 1}/${filteredInitiatives.length}: ${initiative.name}`);
             console.log(`Enriching initiative ${initiative.id} (${initiative.name})`);
 
-            // Fetch performance measures and main activities in parallel but with error handling
-            const [measuresResult, activitiesResult] = await Promise.allSettled([
-              // Performance measures
-              (async () => {
+            // Fetch performance measures with multiple strategies
+            let allMeasures = [];
+            try {
+              console.log(`Fetching performance measures for initiative ${initiative.id}`);
+              
+              // Strategy 1: Use API function
+              try {
+                const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+                allMeasures = measuresResponse?.data || [];
+                console.log(`Strategy 1: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
+              } catch (measures1Error) {
+                console.warn(`Performance measures strategy 1 failed for initiative ${initiative.id}:`, measures1Error);
+                
+                // Strategy 2: Direct API call with alternative parameters
                 try {
-                  const response = await performanceMeasures.getByInitiative(initiative.id);
-                  return response?.data || [];
-                } catch (error) {
-                  console.warn(`Failed to get performance measures for initiative ${initiative.id}:`, error);
+                  const measuresResponse = await axios.get('/api/performance-measures/', {
+                    params: { 
+                      initiative: initiative.id,
+                      initiative_id: initiative.id,
+                      _t: Date.now()
+                    },
+                    timeout: 10000,
+                    withCredentials: true
+                  });
+                  allMeasures = measuresResponse.data?.results || measuresResponse.data || [];
+                  console.log(`Strategy 2: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
+                } catch (measures2Error) {
+                  console.warn(`Performance measures strategy 2 failed for initiative ${initiative.id}:`, measures2Error);
+                  
+                  // Strategy 3: Simple parameter format
                   try {
-                    // Fallback strategy
-                    const response = await axios.get(`/api/performance-measures/`, {
+                    const measuresResponse = await axios.get('/api/performance-measures/', {
                       params: { initiative: initiative.id },
-                      timeout: 5000,
+                      timeout: 6000,
                       withCredentials: true
                     });
-                    return response.data?.results || response.data || [];
-                  } catch (fallbackError) {
-                    console.warn(`Fallback also failed for performance measures ${initiative.id}:`, fallbackError);
-                    return [];
+                    allMeasures = measuresResponse.data?.results || measuresResponse.data || [];
+                    console.log(`Strategy 3: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
+                  } catch (measures3Error) {
+                    console.warn(`All performance measures strategies failed for initiative ${initiative.id}:`, measures3Error);
+                    allMeasures = [];
                   }
                 }
-              })(),
-              // Main activities
-              (async () => {
+              }
+            } catch (measuresError) {
+              console.warn(`Failed to get performance measures for initiative ${initiative.id}:`, measuresError);
+              allMeasures = [];
+            }
+            
+            // Fetch main activities with multiple strategies
+            let allActivities = [];
+            try {
+              console.log(`Fetching main activities for initiative ${initiative.id}`);
+              
+              // Strategy 1: Use API function
+              try {
+                const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+                allActivities = activitiesResponse?.data || [];
+                console.log(`Strategy 1: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
+              } catch (activities1Error) {
+                console.warn(`Main activities strategy 1 failed for initiative ${initiative.id}:`, activities1Error);
+                
+                // Strategy 2: Direct API call with alternative parameters
                 try {
-                  const response = await mainActivities.getByInitiative(initiative.id);
-                  return response?.data || [];
-                } catch (error) {
-                  console.warn(`Failed to get main activities for initiative ${initiative.id}:`, error);
+                  const activitiesResponse = await axios.get('/api/main-activities/', {
+                    params: { 
+                      initiative: initiative.id,
+                      initiative_id: initiative.id,
+                      _t: Date.now()
+                    },
+                    timeout: 10000,
+                    withCredentials: true
+                  });
+                  allActivities = activitiesResponse.data?.results || activitiesResponse.data || [];
+                  console.log(`Strategy 2: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
+                } catch (activities2Error) {
+                  console.warn(`Main activities strategy 2 failed for initiative ${initiative.id}:`, activities2Error);
+                  
+                  // Strategy 3: Simple parameter format
                   try {
-                    // Fallback strategy
-                    const response = await axios.get(`/api/main-activities/`, {
+                    const activitiesResponse = await axios.get('/api/main-activities/', {
                       params: { initiative: initiative.id },
-                      timeout: 5000,
+                      timeout: 6000,
                       withCredentials: true
                     });
-                    return response.data?.results || response.data || [];
-                  } catch (fallbackError) {
-                    console.warn(`Fallback also failed for main activities ${initiative.id}:`, fallbackError);
-                    return [];
+                    allActivities = activitiesResponse.data?.results || activitiesResponse.data || [];
+                    console.log(`Strategy 3: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
+                  } catch (activities3Error) {
+                    console.warn(`All main activities strategies failed for initiative ${initiative.id}:`, activities3Error);
+                    allActivities = [];
                   }
                 }
-              })()
-            ]);
-
-            // Handle results
-            const measures = measuresResult.status === 'fulfilled' ? measuresResult.value : [];
-            const activities = activitiesResult.status === 'fulfilled' ? activitiesResult.value : [];
+              }
+            } catch (activitiesError) {
+              console.warn(`Failed to get main activities for initiative ${initiative.id}:`, activitiesError);
+              allActivities = [];
+            }
 
             // Filter by organization
-            const filteredMeasures = measures.filter(measure =>
+            const filteredMeasures = allMeasures.filter(measure =>
               !measure.organization || measure.organization === userOrgId
             );
 
-            const filteredActivities = activities.filter(activity =>
+            const filteredActivities = allActivities.filter(activity =>
               !activity.organization || activity.organization === userOrgId
             );
 
@@ -325,7 +475,7 @@ const PlanSummary: React.FC = () => {
 
             // Small delay to prevent server overload
             if (j < filteredInitiatives.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise(resolve => setTimeout(resolve, 200));
             }
 
           } catch (initiativeError) {
@@ -354,7 +504,7 @@ const PlanSummary: React.FC = () => {
 
         // Small delay between objectives
         if (i < objectivesList.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
 
       } catch (objectiveError) {
