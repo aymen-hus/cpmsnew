@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isEvaluator } from '../types/user';
+import PlanReviewTable from '../components/PlanReviewTable';
 
 // Production-safe API helper with comprehensive retry logic (COPIED FROM PlanReviewTable)
 const productionSafeAPI = {
