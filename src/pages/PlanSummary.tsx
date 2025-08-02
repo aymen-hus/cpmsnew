@@ -306,42 +306,52 @@ const getPlanObjectives = async (planData: any) => {
   console.log('=== GETTING PLAN OBJECTIVES ===');
   console.log('Plan data:', planData);
   
-  let planObjectiveIds = [];
+  // First, get ALL objectives from the system to ensure we have complete data
+  console.log('Fetching ALL objectives from system...');
+  const allObjectivesResponse = await objectives.getAll();
+  const allObjectives = allObjectivesResponse?.data || [];
+  console.log(`Found ${allObjectives.length} total objectives in system`);
   
-  // Try to get objective IDs from various sources in plan data
+  // Now determine which objectives belong to this plan
+  let planObjectives = [];
+  
   if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
-    planObjectiveIds = planData.selected_objectives.map(obj => obj.id || obj);
-    console.log('Found selected_objectives:', planObjectiveIds);
+    // Multi-objective plan - get specific objectives
+    const selectedIds = planData.selected_objectives.map(obj => obj.id || obj);
+    console.log('Plan has selected_objectives:', selectedIds);
+    
+    planObjectives = allObjectives.filter(obj => selectedIds.includes(obj.id));
+    console.log(`Filtered to ${planObjectives.length} selected objectives`);
   } else if (planData.strategic_objective) {
-    planObjectiveIds = [planData.strategic_objective];
-    console.log('Found strategic_objective:', planObjectiveIds);
+    // Single objective plan
+    console.log('Plan has single strategic_objective:', planData.strategic_objective);
+    
+    planObjectives = allObjectives.filter(obj => 
+      obj.id === planData.strategic_objective || 
+      obj.id.toString() === planData.strategic_objective.toString()
+    );
+    console.log(`Found ${planObjectives.length} objective for single strategic_objective`);
   } else if (planData.objectives && Array.isArray(planData.objectives)) {
-    planObjectiveIds = planData.objectives.map(obj => obj.id || obj);
-    console.log('Found objectives array:', planObjectiveIds);
+    // Fallback - objectives array
+    const objectiveIds = planData.objectives.map(obj => obj.id || obj);
+    console.log('Plan has objectives array:', objectiveIds);
+    
+    planObjectives = allObjectives.filter(obj => objectiveIds.includes(obj.id));
+    console.log(`Filtered to ${planObjectives.length} objectives from array`);
   } else {
     console.warn('No objectives found in plan data');
     return [];
   }
   
-  // Fetch the complete data for these specific objectives
-  console.log(`Fetching complete data for ${planObjectiveIds.length} plan objectives...`);
-  
-  const planObjectives = [];
-  
-  // Get each objective by ID
-  for (const objId of planObjectiveIds) {
-    try {
-      const objResponse = await objectives.getById(objId.toString());
-      if (objResponse?.data) {
-        planObjectives.push(objResponse.data);
-        console.log(`Fetched objective: ${objResponse.data.title}`);
-      }
-    } catch (error) {
-      console.warn(`Failed to fetch objective ${objId}:`, error);
-    }
+  if (planObjectives.length === 0) {
+    console.warn('No matching objectives found for this plan');
+    return [];
   }
   
   console.log(`Found ${planObjectives.length} plan objectives`);
+  planObjectives.forEach(obj => {
+    console.log(`- Objective ${obj.id}: ${obj.title} (Weight: ${obj.weight}%)`);
+  });
   
   // Now fetch complete data for these plan objectives
   return await fetchCompleteData(planObjectives);
