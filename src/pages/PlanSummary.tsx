@@ -192,63 +192,122 @@ const productionSafeAPI = {
 };
 
 // COMPLETELY REWRITTEN: Organization-specific data fetching
-const fetchCompleteData = async (objectivesList: any[]) => {
+const fetchCompleteData = async (objectivesList: any[], organizationId?: number) => {
   if (!objectivesList || objectivesList.length === 0) {
-    console.log('No objectives to process');
+    console.log('❌ No objectives to process');
     return [];
   }
 
-  console.log(`Processing ${objectivesList.length} objectives for complete data`);
+  console.log(`🚀 PROCESSING ${objectivesList.length} OBJECTIVES FOR ORGANIZATION ${organizationId}`);
   
   const enrichedObjectives = [];
 
-  for (let i = 0; i < objectivesList.length; i++) {
-    const objective = objectivesList[i];
+  for (let objIndex = 0; objIndex < objectivesList.length; objIndex++) {
+    const objective = objectivesList[objIndex];
     if (!objective) continue;
 
     try {
-      console.log(`Processing objective ${i + 1}/${objectivesList.length}: ${objective.title}`);
+      console.log(`\n📋 === PROCESSING OBJECTIVE ${objIndex + 1}/${objectivesList.length} ===`);
+      console.log(`🎯 Objective: ${objective.title} (ID: ${objective.id})`);
 
-      // Fetch initiatives for this objective with production-safe API
+      // Fetch ALL initiatives for this objective
+      console.log(`🔍 Fetching ALL initiatives for objective ${objective.id}...`);
+      
+      // Wait a bit before each objective to prevent server overload
+      if (objIndex > 0) {
+        console.log('⏱️ Waiting 500ms before next objective...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
       const objectiveInitiatives = await productionSafeAPI.getInitiativesForObjective(objective.id.toString());
       
-      console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
+      console.log(`✅ Found ${objectiveInitiatives.length} total initiatives for objective ${objective.id}`);
+      
+      // Filter initiatives by organization - include default AND organization-specific
+      const filteredInitiatives = objectiveInitiatives.filter(initiative => {
+        // Include default initiatives (available to all)
+        if (initiative.is_default) {
+          console.log(`  ✅ Including default initiative: ${initiative.name} (ID: ${initiative.id})`);
+          return true;
+        }
+        
+        // Include initiatives that belong to this organization
+        if (organizationId && initiative.organization === organizationId) {
+          console.log(`  ✅ Including org-specific initiative: ${initiative.name} (ID: ${initiative.id}) for org ${organizationId}`);
+          return true;
+        }
+        
+        // Include initiatives with no organization (legacy data)
+        if (!initiative.organization) {
+          console.log(`  ✅ Including legacy initiative: ${initiative.name} (ID: ${initiative.id})`);
+          return true;
+        }
+        
+        console.log(`  ❌ Excluding initiative: ${initiative.name} (ID: ${initiative.id}) - org: ${initiative.organization}, plan org: ${organizationId}`);
+        return false;
+      });
+      
+      console.log(`🎯 Filtered to ${filteredInitiatives.length} initiatives for organization ${organizationId}`);
 
-      // Process each initiative sequentially to avoid overwhelming the server
+      // Process each initiative with proper delays
       const enrichedInitiatives = [];
       
-      for (let j = 0; j < objectiveInitiatives.length; j++) {
-        const initiative = objectiveInitiatives[j];
+      for (let initIndex = 0; initIndex < filteredInitiatives.length; initIndex++) {
+        const initiative = filteredInitiatives[initIndex];
         if (!initiative) continue;
 
         try {
-          console.log(`Processing initiative ${j + 1}/${objectiveInitiatives.length}: ${initiative.name}`);
+          console.log(`\n  🎯 === PROCESSING INITIATIVE ${initIndex + 1}/${filteredInitiatives.length} ===`);
+          console.log(`  📝 Initiative: ${initiative.name} (ID: ${initiative.id})`);
+          
+          // Wait between initiatives to prevent server overload
+          if (initIndex > 0) {
+            console.log('  ⏱️ Waiting 300ms before next initiative...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
 
-          // Fetch performance measures and main activities in parallel but with production-safe API
+          // Fetch performance measures and main activities with delays
+          console.log(`  🔍 Fetching performance measures for initiative ${initiative.id}...`);
+          
           const [performanceMeasuresData, mainActivitiesData] = await Promise.allSettled([
             productionSafeAPI.getPerformanceMeasuresForInitiative(initiative.id),
+            // Add delay between the two calls
+            new Promise(resolve => setTimeout(resolve, 200)).then(() => 
             productionSafeAPI.getMainActivitiesForInitiative(initiative.id)
+            )
           ]);
 
           // Handle results with fallback to empty arrays
           const measures = performanceMeasuresData.status === 'fulfilled' ? performanceMeasuresData.value : [];
           const activities = mainActivitiesData.status === 'fulfilled' ? mainActivitiesData.value : [];
+          
+          // Filter measures and activities by organization
+          const filteredMeasures = measures.filter(measure =>
+            !measure.organization || measure.organization === organizationId || measure.is_default
+          );
+          
+          const filteredActivities = activities.filter(activity =>
+            !activity.organization || activity.organization === organizationId || activity.is_default
+          );
 
-          console.log(`Initiative ${initiative.id}: ${measures.length} measures, ${activities.length} activities`);
+          console.log(`  ✅ Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+          console.log(`    📊 Measures: ${filteredMeasures.map(m => m.name).join(', ')}`);
+          console.log(`    🎬 Activities: ${filteredActivities.map(a => a.name).join(', ')}`);
 
           enrichedInitiatives.push({
             ...initiative,
-            performance_measures: measures,
-            main_activities: activities
+            performance_measures: filteredMeasures,
+            main_activities: filteredActivities
           });
 
-          // Small delay between initiatives to prevent server overload
-          if (j < objectiveInitiatives.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+          // Longer delay between initiatives to ensure complete loading
+          if (initIndex < filteredInitiatives.length - 1) {
+            console.log('  ⏱️ Waiting 400ms before next initiative...');
+            await new Promise(resolve => setTimeout(resolve, 400));
           }
 
         } catch (initiativeError) {
-          console.warn(`Error processing initiative ${initiative.id}:`, initiativeError);
+          console.error(`  ❌ Error processing initiative ${initiative.id}:`, initiativeError);
           // Add initiative with empty data instead of skipping
           enrichedInitiatives.push({
             ...initiative,
@@ -269,15 +328,16 @@ const fetchCompleteData = async (objectivesList: any[]) => {
         initiatives: enrichedInitiatives
       });
 
-      console.log(`Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+      console.log(`✅ COMPLETED OBJECTIVE ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
 
-      // Small delay between objectives
-      if (i < objectivesList.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      // Longer delay between objectives to ensure complete loading
+      if (objIndex < objectivesList.length - 1) {
+        console.log('⏱️ Waiting 600ms before next objective...');
+        await new Promise(resolve => setTimeout(resolve, 600));
       }
 
     } catch (objectiveError) {
-      console.warn(`Error processing objective ${objective.id}:`, objectiveError);
+      console.error(`❌ Error processing objective ${objective.id}:`, objectiveError);
       // Add objective with empty initiatives instead of skipping
       enrichedObjectives.push({
         ...objective,
@@ -287,8 +347,8 @@ const fetchCompleteData = async (objectivesList: any[]) => {
     }
   }
 
-  console.log(`=== PROCESSING COMPLETE ===`);
-  console.log(`Successfully processed ${enrichedObjectives.length} objectives`);
+  console.log(`\n🎉 === PROCESSING COMPLETE FOR ORGANIZATION ${organizationId} ===`);
+  console.log(`✅ Successfully processed ${enrichedObjectives.length} objectives`);
   
   const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
   const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
@@ -296,7 +356,16 @@ const fetchCompleteData = async (objectivesList: any[]) => {
   const totalActivities = enrichedObjectives.reduce((sum, obj) => 
     sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.main_activities?.length || 0), 0) || 0), 0);
   
-  console.log(`FINAL TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+  console.log(`🏆 FINAL TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+  
+  // Log detailed breakdown for debugging
+  enrichedObjectives.forEach((obj, index) => {
+    console.log(`\n📊 OBJECTIVE ${index + 1}: ${obj.title}`);
+    console.log(`  🎯 Initiatives (${obj.initiatives?.length || 0}):`);
+    obj.initiatives?.forEach((init, initIndex) => {
+      console.log(`    ${initIndex + 1}. ${init.name} - Measures: ${init.performance_measures?.length || 0}, Activities: ${init.main_activities?.length || 0}`);
+    });
+  });
 
   return enrichedObjectives;
 };
@@ -306,55 +375,75 @@ const getPlanObjectives = async (planData: any) => {
   console.log('=== GETTING PLAN OBJECTIVES ===');
   console.log('Plan data:', planData);
   
-  // First, get ALL objectives from the system to ensure we have complete data
-  console.log('Fetching ALL objectives from system...');
-  const allObjectivesResponse = await objectives.getAll();
-  const allObjectives = allObjectivesResponse?.data || [];
-  console.log(`Found ${allObjectives.length} total objectives in system`);
-  
-  // Now determine which objectives belong to this plan
-  let planObjectives = [];
-  
-  if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
-    // Multi-objective plan - get specific objectives
-    const selectedIds = planData.selected_objectives.map(obj => obj.id || obj);
-    console.log('Plan has selected_objectives:', selectedIds);
+  try {
+    // Step 1: Get ALL objectives from the system first
+    console.log('=== STEP 1: FETCHING ALL OBJECTIVES ===');
+    let allObjectives = [];
     
-    planObjectives = allObjectives.filter(obj => selectedIds.includes(obj.id));
-    console.log(`Filtered to ${planObjectives.length} selected objectives`);
-  } else if (planData.strategic_objective) {
-    // Single objective plan
-    console.log('Plan has single strategic_objective:', planData.strategic_objective);
+    try {
+      const allObjectivesResponse = await objectives.getAll();
+      allObjectives = allObjectivesResponse?.data || [];
+      console.log(`✅ Found ${allObjectives.length} total objectives in system`);
+      
+      if (allObjectives.length === 0) {
+        console.warn('⚠️ No objectives found in system');
+        return [];
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch all objectives:', error);
+      throw new Error('Failed to fetch objectives from system');
+    }
     
-    planObjectives = allObjectives.filter(obj => 
-      obj.id === planData.strategic_objective || 
-      obj.id.toString() === planData.strategic_objective.toString()
+    // Step 2: Determine which objectives belong to this plan
+    console.log('=== STEP 2: FILTERING PLAN OBJECTIVES ===');
+    let planObjectiveIds = [];
+    
+    if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
+      // Multi-objective plan
+      planObjectiveIds = planData.selected_objectives.map(obj => obj.id || obj);
+      console.log(`📋 Multi-objective plan with ${planObjectiveIds.length} objectives:`, planObjectiveIds);
+    } else if (planData.strategic_objective) {
+      // Single objective plan
+      planObjectiveIds = [planData.strategic_objective];
+      console.log(`🎯 Single-objective plan with objective:`, planData.strategic_objective);
+    } else if (planData.objectives && Array.isArray(planData.objectives)) {
+      // Fallback - objectives array in plan data
+      planObjectiveIds = planData.objectives.map(obj => obj.id || obj);
+      console.log(`📦 Plan has objectives array with ${planObjectiveIds.length} objectives:`, planObjectiveIds);
+    } else {
+      console.warn('⚠️ No objectives configuration found in plan data');
+      // Last resort - try to get all objectives for this organization
+      console.log('🔍 Trying to get all objectives for organization:', planData.organization);
+      const planObjectives = allObjectives.filter(obj => 
+        !obj.organization || obj.organization === planData.organization || obj.is_default
+      );
+      return await fetchCompleteData(planObjectives, planData.organization);
+    }
+    
+    // Step 3: Get the actual objective objects
+    console.log('=== STEP 3: GETTING OBJECTIVE OBJECTS ===');
+    const planObjectives = allObjectives.filter(obj => 
+      planObjectiveIds.includes(obj.id) || planObjectiveIds.includes(obj.id.toString())
     );
-    console.log(`Found ${planObjectives.length} objective for single strategic_objective`);
-  } else if (planData.objectives && Array.isArray(planData.objectives)) {
-    // Fallback - objectives array
-    const objectiveIds = planData.objectives.map(obj => obj.id || obj);
-    console.log('Plan has objectives array:', objectiveIds);
     
-    planObjectives = allObjectives.filter(obj => objectiveIds.includes(obj.id));
-    console.log(`Filtered to ${planObjectives.length} objectives from array`);
-  } else {
-    console.warn('No objectives found in plan data');
-    return [];
+    console.log(`✅ Found ${planObjectives.length} plan objectives out of ${planObjectiveIds.length} requested`);
+    planObjectives.forEach(obj => {
+      console.log(`  📌 Objective ${obj.id}: ${obj.title} (Weight: ${obj.weight}%, Planner: ${obj.planner_weight || 'N/A'}%)`);
+    });
+    
+    if (planObjectives.length === 0) {
+      console.warn('❌ No matching objectives found for this plan');
+      throw new Error(`No objectives found for plan. Requested IDs: ${planObjectiveIds.join(', ')}`);
+    }
+    
+    // Step 4: Fetch complete data for these objectives
+    console.log('=== STEP 4: FETCHING COMPLETE DATA ===');
+    return await fetchCompleteData(planObjectives, planData.organization);
+    
+  } catch (error) {
+    console.error('❌ Error in getPlanObjectives:', error);
+    throw error;
   }
-  
-  if (planObjectives.length === 0) {
-    console.warn('No matching objectives found for this plan');
-    return [];
-  }
-  
-  console.log(`Found ${planObjectives.length} plan objectives`);
-  planObjectives.forEach(obj => {
-    console.log(`- Objective ${obj.id}: ${obj.title} (Weight: ${obj.weight}%)`);
-  });
-  
-  // Now fetch complete data for these plan objectives
-  return await fetchCompleteData(planObjectives);
 };
 
 const PlanSummary: React.FC = () => {
@@ -427,6 +516,8 @@ const PlanSummary: React.FC = () => {
   // Function to handle showing the table view with complete data
   const handleShowTableView = async (forceRefresh = false) => {
     console.log('=== STARTING PLAN DATA FETCH ===');
+    console.log('Plan organization:', planData?.organization);
+    console.log('Plan organization name:', planData?.organization_name);
     console.log('Plan data structure:', {
       id: planData?.id,
       organization: planData?.organization,
@@ -439,18 +530,31 @@ const PlanSummary: React.FC = () => {
     try {
       setIsEnriching(true);
       setEnrichError(null);
-      setEnrichProgress('Getting plan objectives...');
+      setEnrichProgress('🔍 Getting plan objectives...');
       
-      // Get plan-specific objectives and their complete data
+      // Add initial delay to ensure all systems are ready
+      console.log('⏱️ Initial delay - preparing systems...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setEnrichProgress('📋 Fetching complete data for organization...');
+      
+      // Get plan-specific objectives and their complete data with organization filtering
       const completeData = await getPlanObjectives(planData);
       
-      console.log('Plan data fetched successfully:', completeData.length);
+      console.log('🎉 Plan data fetched successfully:', completeData.length, 'objectives');
+      
+      // Final delay to ensure all data is processed
+      console.log('⏱️ Final processing delay...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       setEnrichedObjectives(completeData);
       setHasAttemptedEnrichment(true);
       setShowPreview(true);
       
+      console.log('✅ Data display ready!');
+      
     } catch (error) {
-      console.error('Error loading plan data:', error);
+      console.error('❌ Error loading plan data:', error);
       setEnrichError(error instanceof Error ? error.message : 'Failed to load plan data');
       setHasAttemptedEnrichment(true);
     } finally {
@@ -958,12 +1062,20 @@ const PlanSummary: React.FC = () => {
                 <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg border border-gray-200">
                   <Loader className="h-10 w-10 text-blue-600 animate-spin mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Organization-Specific Data</h3>
-                  <p className="text-gray-600 text-center mb-4">{enrichProgress}</p>
+                  <p className="text-gray-600 text-center mb-4">
+                    {enrichProgress}
+                    <br />
+                    <span className="text-sm text-gray-500">Please wait while we fetch complete data...</span>
+                  </p>
                   <div className="w-full max-w-md bg-gray-200 rounded-full h-2">
-                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: '50%' }}></div>
+                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-500 animate-pulse" style={{ width: '70%' }}></div>
                   </div>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Fetching complete data for organization {planData?.organization}...
+                  <p className="text-sm text-gray-500 mt-4">
+                    📊 Fetching ALL objectives, initiatives, measures & activities
+                    <br />
+                    🏢 Organization: {planData?.organization_name || planData?.organization}
+                    <br />
+                    ⏱️ This may take 10-15 seconds for complete data...
                   </p>
                 </div>
               ) : enrichError ? (
