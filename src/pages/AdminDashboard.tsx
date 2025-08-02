@@ -270,7 +270,6 @@ const AdminDashboard: React.FC = () => {
     };
 
     // Organization-wise statistics
-    const orgBudgetMap: Record<string, { total: number, funded: number, gap: number, planCount: number }> = {};
     const orgBudgetMapWithEligible: Record<string, { total: number, funded: number, gap: number, planCount: number, eligibleCount: number }> = {};
 
     allPlansData.forEach(plan => {
@@ -299,18 +298,24 @@ const AdminDashboard: React.FC = () => {
       
       orgBudgetMapWithEligible[orgName].planCount++;
 
-      // Use the calculated budget data from fetchCompleteBudgetData
-      const planTotalBudget = Number(plan.budget_total || 0);
-      const planFundedBudget = Number(plan.funded_total || 0);
-      const planFundingGap = Number(plan.funding_gap || 0);
+      // Only include budget data for SUBMITTED or APPROVED plans
+      if (plan.status === 'SUBMITTED' || plan.status === 'APPROVED') {
+        stats.eligiblePlansForBudget++;
+        orgBudgetMapWithEligible[orgName].eligibleCount++;
+        
+        // Use the calculated budget data from fetchCompleteBudgetData
+        const planTotalBudget = Number(plan.budget_total || 0);
+        const planFundedBudget = Number(plan.funded_total || 0);
+        const planFundingGap = Number(plan.funding_gap || 0);
 
-      stats.totalBudget += planTotalBudget;
-      stats.fundedBudget += planFundedBudget;
-      stats.fundingGap += planFundingGap;
+        stats.totalBudget += planTotalBudget;
+        stats.fundedBudget += planFundedBudget;
+        stats.fundingGap += planFundingGap;
 
-      orgBudgetMap[orgName].total += planTotalBudget;
-      orgBudgetMap[orgName].funded += planFundedBudget;
-      orgBudgetMap[orgName].gap += planFundingGap;
+        orgBudgetMapWithEligible[orgName].total += planTotalBudget;
+        orgBudgetMapWithEligible[orgName].funded += planFundedBudget;
+        orgBudgetMapWithEligible[orgName].gap += planFundingGap;
+      }
     });
 
     stats.orgStats = orgBudgetMapWithEligible;
@@ -359,7 +364,6 @@ const AdminDashboard: React.FC = () => {
         label: 'Available Funding',
         data: Object.keys(stats.orgStats)
           .filter(orgName => stats.orgStats[orgName].total > 0 || stats.orgStats[orgName].funded > 0)
-        orgBudgetMapWithEligible[orgName].eligibleCount++;
           .map(orgName => stats.orgStats[orgName].funded),
         backgroundColor: 'rgba(75, 192, 192, 0.6)',
         borderColor: 'rgba(75, 192, 192, 1)',
@@ -370,10 +374,10 @@ const AdminDashboard: React.FC = () => {
         data: Object.keys(stats.orgStats)
           .filter(orgName => stats.orgStats[orgName].total > 0 || stats.orgStats[orgName].funded > 0)
           .map(orgName => stats.orgStats[orgName].gap),
-        orgBudgetMapWithEligible[orgName].total += planTotalBudget;
-        orgBudgetMapWithEligible[orgName].funded += planFundedBudget;
-        orgBudgetMapWithEligible[orgName].gap += planFundingGap;
-      }
+        backgroundColor: 'rgba(255, 99, 132, 0.6)',
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 1
+       }
     ]
   };
 
