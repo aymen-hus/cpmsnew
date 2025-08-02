@@ -4,7 +4,9 @@ import { BarChart3, Target, Activity, DollarSign, Calendar, User, Building2, Fil
 import { StrategicObjective } from '../types/organization';
 import { PlanType } from '../types/plan';
 import { formatCurrency, processDataForExport, exportToExcel, exportToPDF } from '../lib/utils/export';
-import { initiatives, performanceMeasures, mainActivities, auth } from '../lib/api';
+import { initiatives, performanceMeasures, mainActivities, auth, api } from '../lib/api';
+import axios from 'axios';
+import Cookies from 'js-cookie';
 
 interface PlanReviewTableProps {
   objectives: StrategicObjective[];
@@ -38,6 +40,8 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUserOrgId, setCurrentUserOrgId] = useState<number | null>(userOrgId);
+  const [retryCount, setRetryCount] = useState(0);
+  const [maxRetries] = useState(3);
 
   // Fetch current user's organization ID if not provided
   useEffect(() => {
@@ -56,6 +60,214 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     
     fetchUserData();
   }, [currentUserOrgId]);
+
+  // Simple and robust API call function for production
+  const fetchDataRobust = async (url: string, description: string, timeout = 8000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      // Ensure fresh auth
+      await auth.getCurrentUser();
+      
+      // Get fresh CSRF token
+      const csrfToken = Cookies.get('csrftoken');
+      
+      const response = await axios.get(url, {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken || '',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        },
+        withCredentials: true,
+        timeout: timeout - 1000 // Axios timeout slightly less than abort timeout
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.data) {
+        console.log(`✅ Successfully fetched ${description}:`, response.data.length || 'data received');
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      }
+      
+      return [];
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.warn(`⚠️ Failed to fetch ${description}:`, error.message);
+      return [];
+    }
+  };
+
+  // Enhanced data fetching with better error handling for production
+  const fetchInitiativeData = async (initiative: any) => {
+    if (!initiative?.id) {
+      console.warn('Invalid initiative data:', initiative);
+      return {
+        ...initiative,
+        performance_measures: [],
+        main_activities: []
+      };
+    }
+    
+    console.log(`🔄 Fetching data for initiative ${initiative.id}`);
+    
+    try {
+      // Fetch performance measures with multiple strategies
+      let performanceMeasuresData = [];
+      try {
+        // Strategy 1: Direct API call
+        performanceMeasuresData = await fetchDataRobust(
+          `/api/performance-measures/?initiative=${initiative.id}&_=${Date.now()}`,
+          `performance measures for initiative ${initiative.id}`
+        );
+        
+        // Strategy 2: If no data, try alternative format
+        if (performanceMeasuresData.length === 0) {
+          performanceMeasuresData = await fetchDataRobust(
+            `/api/performance-measures/?initiative_id=${initiative.id}&_=${Date.now()}`,
+            `performance measures (alt format) for initiative ${initiative.id}`
+          );
+        }
+        
+        // Strategy 3: Use the API service as fallback
+        if (performanceMeasuresData.length === 0) {
+          try {
+            const response = await performanceMeasures.getByInitiative(initiative.id);
+            performanceMeasuresData = response?.data || [];
+          } catch (serviceError) {
+            console.warn(`API service failed for performance measures ${initiative.id}:`, serviceError.message);
+          }
+        }
+      } catch (error) {
+        console.warn(`All performance measures strategies failed for initiative ${initiative.id}:`, error.message);
+        performanceMeasuresData = [];
+      }
+      
+      // Fetch main activities with multiple strategies
+      let mainActivitiesData = [];
+      try {
+        // Strategy 1: Direct API call
+        mainActivitiesData = await fetchDataRobust(
+          `/api/main-activities/?initiative=${initiative.id}&_=${Date.now()}`,
+          `main activities for initiative ${initiative.id}`
+        );
+        
+        // Strategy 2: If no data, try alternative format
+        if (mainActivitiesData.length === 0) {
+          mainActivitiesData = await fetchDataRobust(
+            `/api/main-activities/?initiative_id=${initiative.id}&_=${Date.now()}`,
+            `main activities (alt format) for initiative ${initiative.id}`
+          );
+        }
+        
+        // Strategy 3: Use the API service as fallback
+        if (mainActivitiesData.length === 0) {
+          try {
+            const response = await mainActivities.getByInitiative(initiative.id);
+            mainActivitiesData = response?.data || [];
+          } catch (serviceError) {
+            console.warn(`API service failed for main activities ${initiative.id}:`, serviceError.message);
+          }
+        }
+      } catch (error) {
+        console.warn(`All main activities strategies failed for initiative ${initiative.id}:`, error.message);
+        mainActivitiesData = [];
+      }
+      
+      // Filter data by organization if needed (more permissive in production)
+      const filteredMeasures = currentUserOrgId ? 
+        performanceMeasuresData.filter(measure => 
+          !measure.organization || measure.organization === currentUserOrgId
+        ) : performanceMeasuresData;
+        
+      const filteredActivities = currentUserOrgId ?
+        mainActivitiesData.filter(activity => 
+          !activity.organization || activity.organization === currentUserOrgId
+        ) : mainActivitiesData;
+      
+      console.log(`✅ Initiative ${initiative.id} data fetched:`, {
+        measures: filteredMeasures.length,
+        activities: filteredActivities.length
+      });
+      
+      return {
+        ...initiative,
+        performance_measures: filteredMeasures,
+        main_activities: filteredActivities
+      };
+      
+    } catch (error) {
+      console.error(`❌ Failed to fetch data for initiative ${initiative.id}:`, error);
+      return {
+        ...initiative,
+        performance_measures: [],
+        main_activities: []
+      };
+    }
+  };
+
+  // Process all objectives data
+  const processObjectivesData = async (objectivesList: any[]) => {
+    if (!Array.isArray(objectivesList) || objectivesList.length === 0) {
+      console.warn('No objectives to process');
+      return [];
+    }
+
+    console.log(`🔄 Processing ${objectivesList.length} objectives...`);
+    
+    const processedObjectives = [];
+    
+    for (const objective of objectivesList) {
+      if (!objective) {
+        console.warn('Skipping null/undefined objective');
+        continue;
+      }
+      
+      console.log(`📋 Processing objective: ${objective.title} (ID: ${objective.id})`);
+      
+      const processedInitiatives = [];
+      
+      if (objective.initiatives && Array.isArray(objective.initiatives)) {
+        console.log(`  📌 Processing ${objective.initiatives.length} initiatives for objective ${objective.id}`);
+        
+        for (const initiative of objective.initiatives) {
+          if (!initiative) {
+            console.warn('  Skipping null/undefined initiative');
+            continue;
+          }
+          
+          console.log(`    🎯 Processing initiative: ${initiative.name} (ID: ${initiative.id})`);
+          
+          try {
+            const enrichedInitiative = await fetchInitiativeData(initiative);
+            processedInitiatives.push(enrichedInitiative);
+            
+            // Small delay between initiatives to prevent overwhelming the server
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (error) {
+            console.error(`    ❌ Failed to process initiative ${initiative.id}:`, error);
+            processedInitiatives.push({
+              ...initiative,
+              performance_measures: [],
+              main_activities: []
+            });
+          }
+        }
+      } else {
+        console.log(`  📌 No initiatives found for objective ${objective.id}`);
+      }
+      
+      processedObjectives.push({
+        ...objective,
+        initiatives: processedInitiatives
+      });
+    }
+    
+    console.log(`✅ Finished processing all objectives. Total: ${processedObjectives.length}`);
+    return processedObjectives;
+  };
 
   // Comprehensive data fetching function
   const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
@@ -338,36 +550,49 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     }
   };
 
-  // Load and process objectives data when component mounts or objectives change
+  // Process objectives data when component mounts or data changes
   useEffect(() => {
-    const loadObjectivesData = async () => {
-      // In production, don't wait for currentUserOrgId - proceed anyway
-      if (!objectives || objectives.length === 0) {
-        console.log('PlanReviewTable: No objectives provided');
+    const loadData = async () => {
+      if (!objectives || !Array.isArray(objectives)) {
+        console.warn('PlanReviewTable: Invalid objectives data');
+        setProcessedObjectives([]);
+        setIsLoading(false);
         return;
       }
-
+      
+      if (objectives.length === 0) {
+        console.log('PlanReviewTable: No objectives provided');
+        setProcessedObjectives([]);
+        setIsLoading(false);
+        return;
+      }
+      
+      setIsLoading(true);
+      setError(null);
+      
       try {
-        setIsLoading(true);
-        setError(null);
-        
-        console.log('PlanReviewTable: Loading objectives data...');
-        
-        // Fetch complete data for all objectives
-        const enrichedObjectives = await fetchCompleteObjectiveData(objectives);
-        
-        setProcessedObjectives(enrichedObjectives);
-        console.log('PlanReviewTable: Processed objectives updated:', enrichedObjectives.length);
+        const processed = await processObjectivesData(objectives);
+        setProcessedObjectives(processed);
       } catch (error) {
-        console.error('PlanReviewTable: Error loading objectives data:', error);
-        setError('Failed to load complete plan data');
+        console.error('❌ Error processing objectives data:', error);
+        setError(`Failed to load plan data: ${error.message}`);
+        setProcessedObjectives([]);
       } finally {
         setIsLoading(false);
       }
     };
-
-    loadObjectivesData();
-  }, [objectives, currentUserOrgId]); // Keep dependency but don't block on currentUserOrgId
+    
+    loadData();
+  }, [objectives, currentUserOrgId, retryCount]);
+  
+  // Retry function
+  const handleRetry = () => {
+    if (retryCount < maxRetries) {
+      console.log(`🔄 Retrying data fetch (attempt ${retryCount + 1}/${maxRetries})`);
+      setRetryCount(prev => prev + 1);
+      setError(null);
+    }
+  };
 
   // Helper function to format dates
   const formatDate = (dateString: string) => {
@@ -526,12 +751,23 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
 
   if (error) {
     return (
-      <div className="p-6 text-center">
-        <div className="rounded-full bg-red-100 p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-          <AlertCircle className="h-8 w-8 text-red-500" />
-        </div>
+      <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-center">
+        <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-4" />
         <h3 className="text-lg font-medium text-red-800 mb-2">Error Loading Plan Data</h3>
-        <p className="text-red-600">{error}</p>
+        <p className="text-red-600 mb-4">{error}</p>
+        {retryCount < maxRetries && (
+          <button
+            onClick={handleRetry}
+            className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
+          >
+            Retry Loading ({retryCount + 1}/{maxRetries})
+          </button>
+        )}
+        {retryCount >= maxRetries && (
+          <p className="text-sm text-red-500">
+            Maximum retry attempts reached. Please refresh the page or contact support.
+          </p>
+        )}
       </div>
     );
   }
