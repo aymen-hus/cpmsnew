@@ -523,6 +523,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     setError(null);
   };
 
+  const handleExportExcel = () => {
     const exportData = processDataForExport(processedObjectives, 'en');
     exportToExcel(
       exportData,
