@@ -22,6 +22,7 @@ import {
   Info
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { exportToExcel, exportToPDF, processDataForExport } from '../lib/utils/export';
 import { isEvaluator } from '../types/user';
 import PlanReviewTable from '../components/PlanReviewTable';
 
@@ -481,6 +482,7 @@ const PlanSummary: React.FC = () => {
 
     fetchUserInfo();
   }, []);
+  const [allOrganizationObjectives, setAllOrganizationObjectives] = useState<any[]>([]);
 
   // Fetch plan data
   const { data: planData, isLoading, error, refetch } = useQuery({
@@ -1024,11 +1026,44 @@ const PlanSummary: React.FC = () => {
 
       {/* Table View Modal */}
       {showPreview && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+            <div className="bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
+                <div className="mt-2 text-xs text-blue-600">
+                  Organization ID: {planData?.organization} | 
+                  Showing {allOrganizationObjectives.length} objective(s) |
+                  Total Initiatives: {allOrganizationObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0)}
+                </div>
               <h2 className="text-xl font-bold text-gray-900">Complete Plan Review</h2>
               <div className="flex items-center gap-2">
+                {/* Excel Export Button */}
+                <button
+                  onClick={() => {
+                    try {
+                      const exportData = processDataForExport(allOrganizationObjectives, 'en');
+                      exportToExcel(
+                        exportData,
+                        `plan-${planData?.organization_name?.replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}`,
+                        'en',
+                        {
+                          organization: planData?.organization_name || 'Unknown',
+                          planner: planData?.planner_name || 'Unknown',
+                          fromDate: planData?.from_date || '',
+                          toDate: planData?.to_date || '',
+                          planType: planData?.type || 'Unknown'
+                        }
+                      );
+                    } catch (error) {
+                      console.error('Export failed:', error);
+                      setError('Failed to export to Excel');
+                    }
+                  }}
+                  disabled={allOrganizationObjectives.length === 0}
+                  className="flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export Excel
+                </button>
                 <button
                   onClick={() => handleShowTableView(true)}
                   disabled={isEnriching}
@@ -1057,7 +1092,14 @@ const PlanSummary: React.FC = () => {
               </div>
             </div>
             
-            <div className="p-6">
+            <div className="flex-1 overflow-y-auto p-6">
+              {allOrganizationObjectives.length === 0 ? (
+                <div className="text-center p-8">
+                  <Target className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No Objectives Found</h3>
+                  <p className="text-gray-500">No objectives found for this organization.</p>
+                </div>
+              ) : (
               {isEnriching ? (
                 <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg border border-gray-200">
                   <Loader className="h-10 w-10 text-blue-600 animate-spin mb-4" />
@@ -1113,7 +1155,7 @@ const PlanSummary: React.FC = () => {
                   <Info className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-yellow-800 mb-2">No Data for This Plan</h3>
                   <p className="text-yellow-700 mb-4">
-                    No data available for this plan. This could be because:
+                objectives={allOrganizationObjectives}
                     • The plan has no objectives assigned
                     • The plan data is incomplete
                     • Network issues preventing data loading
@@ -1125,6 +1167,7 @@ const PlanSummary: React.FC = () => {
                     <RefreshCw className="h-4 w-4 inline mr-2" /> Try Loading Again
                   </button>
                 </div>
+              )}
               )}
             </div>
           </div>
@@ -1170,10 +1213,171 @@ const PlanReviewForm: React.FC<PlanReviewFormProps> = ({
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Comprehensive function to fetch ALL objectives for the organization
+  const fetchAllOrganizationObjectives = async (organizationId: number) => {
+    if (!organizationId) {
+      console.error('No organization ID provided');
+      return [];
+    }
+
+    try {
+      console.log(`=== FETCHING ALL OBJECTIVES FOR ORGANIZATION ${organizationId} ===`);
+      
+      // Step 1: Get ALL objectives from the system
+      console.log('Step 1: Fetching ALL objectives from system...');
+      const allObjectivesResponse = await objectives.getAll();
+      const allObjectives = allObjectivesResponse?.data || [];
+      console.log(`Found ${allObjectives.length} total objectives in system`);
+      
+      // Step 2: Get ALL initiatives for this organization
+      console.log('Step 2: Fetching ALL initiatives...');
+      const allInitiativesResponse = await initiatives.getAll();
+      const allInitiatives = allInitiativesResponse?.data || [];
+      console.log(`Found ${allInitiatives.length} total initiatives in system`);
+      
+      // Step 3: Filter initiatives for this organization
+      const orgInitiatives = allInitiatives.filter(initiative => 
+        initiative.is_default || 
+        !initiative.organization || 
+        initiative.organization === organizationId
+      );
+      console.log(`Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId}`);
+      
+      // Step 4: Group initiatives by objective
+      const objectiveInitiativesMap = new Map<string, any[]>();
+      
+      orgInitiatives.forEach(initiative => {
+        const objectiveId = initiative.strategic_objective?.toString();
+        if (objectiveId) {
+          if (!objectiveInitiativesMap.has(objectiveId)) {
+            objectiveInitiativesMap.set(objectiveId, []);
+          }
+          objectiveInitiativesMap.get(objectiveId)!.push(initiative);
+        }
+      });
+      
+      console.log(`Initiatives grouped by ${objectiveInitiativesMap.size} objectives`);
+      
+      // Step 5: For each objective that has initiatives, fetch complete data
+      const enrichedObjectives = [];
+      
+      for (const objective of allObjectives) {
+        if (!objective || !objective.id) continue;
+        
+        const objectiveInitiatives = objectiveInitiativesMap.get(objective.id.toString()) || [];
+        
+        // Only process objectives that have initiatives for this organization
+        if (objectiveInitiatives.length === 0) {
+          console.log(`Skipping objective ${objective.id} (${objective.title}) - no initiatives for org ${organizationId}`);
+          continue;
+        }
+        
+        console.log(`Processing objective ${objective.id} (${objective.title}) with ${objectiveInitiatives.length} initiatives`);
+        
+        // For each initiative, fetch performance measures and main activities
+        const enrichedInitiatives = [];
+        
+        for (const initiative of objectiveInitiatives) {
+          try {
+            console.log(`  Fetching data for initiative ${initiative.id} (${initiative.name})`);
+            
+            // Fetch performance measures with retry logic
+            let measures = [];
+            try {
+              const measuresResponse = await productionSafeAPI.getPerformanceMeasuresForInitiative(initiative.id);
+              measures = measuresResponse.filter(measure =>
+                !measure.organization || measure.organization === organizationId
+              );
+              console.log(`    Found ${measures.length} measures for initiative ${initiative.id}`);
+            } catch (error) {
+              console.warn(`    Failed to fetch measures for initiative ${initiative.id}:`, error);
+            }
+            
+            // Small delay between API calls
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Fetch main activities with retry logic
+            let activities = [];
+            try {
+              const activitiesResponse = await productionSafeAPI.getMainActivitiesForInitiative(initiative.id);
+              activities = activitiesResponse.filter(activity =>
+                !activity.organization || activity.organization === organizationId
+              );
+              console.log(`    Found ${activities.length} activities for initiative ${initiative.id}`);
+            } catch (error) {
+              console.warn(`    Failed to fetch activities for initiative ${initiative.id}:`, error);
+            }
+            
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: measures,
+              main_activities: activities
+            });
+            
+            // Small delay between initiatives
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+          } catch (error) {
+            console.error(`Error processing initiative ${initiative.id}:`, error);
+            // Add initiative with empty data instead of skipping
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: [],
+              main_activities: []
+            });
+          }
+        }
+        
+        // Set effective weight
+        const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+          ? objective.planner_weight
+          : objective.weight;
+        
+        enrichedObjectives.push({
+          ...objective,
+          effective_weight: effectiveWeight,
+          initiatives: enrichedInitiatives
+        });
+        
+        console.log(`Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+        
+        // Delay between objectives
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      console.log(`=== FINAL RESULT ===`);
+      console.log(`Successfully processed ${enrichedObjectives.length} objectives for organization ${organizationId}`);
+      
+      const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
+      const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
+        sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.performance_measures?.length || 0), 0) || 0), 0);
+      const totalActivities = enrichedObjectives.reduce((sum, obj) => 
+        sum + (obj.initiatives?.reduce((iSum, init) => iSum + (init.main_activities?.length || 0), 0) || 0), 0);
+      
+      console.log(`ORGANIZATION ${organizationId} TOTALS: ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+      
+      return enrichedObjectives;
+    } catch (error) {
+      console.error(`Error fetching objectives for organization ${organizationId}:`, error);
+      throw error;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!planData?.organization) {
+      setError('Plan organization data not available');
+      return;
+    }
+    
     try {
       setError(null);
+      console.log(`Fetching complete data for organization ${planData.organization}...`);
+      
+      // Fetch ALL objectives for this organization
+      const organizationObjectives = await fetchAllOrganizationObjectives(Number(planData.organization));
+      setAllOrganizationObjectives(organizationObjectives);
+      
       await onSubmit({ status, feedback });
     } catch (error: any) {
       setError(error.message || 'Failed to submit review');

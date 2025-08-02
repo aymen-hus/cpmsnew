@@ -29,7 +29,7 @@ const productionSafeAPI = {
         console.log(`${description} - Attempt ${attempt}/${maxRetries}`);
         
         // Set timeout based on attempt (shorter timeouts on later attempts)
-        const timeout = Math.max(5000, 15000 - (attempt * 3000));
+        const timeout = Math.max(8000, 20000 - (attempt * 4000));
         
         const result = await Promise.race([
           apiCall(),
@@ -46,7 +46,7 @@ const productionSafeAPI = {
         
         if (attempt < maxRetries) {
           // Wait before retry with exponential backoff
-          const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          const waitTime = Math.min(2000 * Math.pow(2, attempt - 1), 8000);
           console.log(`${description} - Waiting ${waitTime}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
