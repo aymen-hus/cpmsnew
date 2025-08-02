@@ -81,6 +81,16 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
   const withToolCost = Number(watch('estimated_cost_with_tool')) || 0;
   const withoutToolCost = Number(watch('estimated_cost_without_tool')) || 0;
 
+  // Calculate partners funding from partners array
+  const calculatedPartnersFunding = partners.reduce((sum, partner) => {
+    return sum + (Number(partner.amount) || 0);
+  }, 0);
+
+  // Update the form field whenever partners change
+  useEffect(() => {
+    setValue('partners_funding', calculatedPartnersFunding);
+  }, [calculatedPartnersFunding, setValue]);
+
   // Make sure the correct estimated cost is set on initial render
   useEffect(() => {
     if (initialRender) {
@@ -147,7 +157,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
   // Calculate totals
   // Make sure we have valid numeric values
   const totalFunding = Number(governmentTreasury || 0) + Number(sdgFunding || 0) + 
-                        Number(partnersFunding || 0) + Number(otherFunding || 0);
+                        Number(calculatedPartnersFunding || 0) + Number(otherFunding || 0);
   
   // Calculate estimated cost based on budget type, ensuring we get a positive number
   const estimatedCost = budgetCalculationType === 'WITH_TOOL' 
@@ -219,8 +229,8 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
         totalPartnersFunding += Number(partner.amount) || 0;
       });
 
-      // Update the partners funding field
-      data.partners_funding = totalPartnersFunding;
+      // Update the partners funding field with calculated value
+      data.partners_funding = calculatedPartnersFunding;
       
       // Store the partners list in the budget data
       data.partners_list = partners;
@@ -228,7 +238,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
       // Validate total funding against estimated cost
       const updatedTotalFunding = Number(data.government_treasury || 0) +
                                 Number(data.sdg_funding || 0) +
-                                totalPartnersFunding +
+                                calculatedPartnersFunding +
                                 Number(data.other_funding || 0);
                                 
       if (updatedTotalFunding > estimatedCost) {
@@ -442,7 +452,16 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
                   </label>
                   <button
                     type="button"
-                    onClick={() => setPartners([...partners, { name: '', amount: 0 }])}
+                    onClick={() => {
+                      const updatedPartners = [...partners, { name: '', amount: 0 }];
+                      let totalPartnersFunding = 0;
+                      partners.forEach(partner => {
+                        totalPartnersFunding += Number(partner.amount) || 0;
+                      });
+                      setPartners(updatedPartners);
+                      // Force update the form field immediately
+                      setValue('partners_funding', totalPartnersFunding);
+                    }}
                     className="px-2 py-1 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50 flex items-center"
                   >
                     <Plus className="h-3 w-3 mr-1" />
@@ -477,6 +496,9 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
                             const updatedPartners = [...partners];
                             updatedPartners[index].amount = Number(e.target.value);
                             setPartners(updatedPartners);
+                            // Calculate and update total immediately
+                            const newTotal = updatedPartners.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                            setValue('partners_funding', newTotal);
                           }}
                           className="block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                         />
@@ -500,7 +522,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
                 <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between text-sm">
                   <span className="font-medium text-gray-700">Total Partners Funding:</span>
                   <span className="font-medium text-blue-600">
-                    ${partners.reduce((sum, partner) => sum + (Number(partner.amount) || 0), 0).toLocaleString()}
+                    ${calculatedPartnersFunding.toLocaleString()}
                   </span>
                 </div>
                 
@@ -508,7 +530,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
                 <input
                   type="hidden"
                   {...register('partners_funding')}
-                  value={partners.reduce((sum, partner) => sum + (Number(partner.amount) || 0), 0)}
+                  value={calculatedPartnersFunding}
                 />
               </div>
 
@@ -577,7 +599,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
           </div>
           <div className="flex justify-between items-center">
             <span className="text-sm text-gray-600">Total Funding:</span>
-            <span className="font-medium">${totalFunding.toLocaleString()}</span>
+            <span className="font-medium">${(governmentTreasury + sdgFunding + calculatedPartnersFunding + otherFunding).toLocaleString()}</span>
           </div>
           <div className="border-t border-gray-200 pt-2 mt-2">
             <div className="flex justify-between items-center">
@@ -630,7 +652,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">Partners Funding ({partners.length}):</span>
-              <span className="font-medium">${partners.reduce((sum, partner) => sum + (Number(partner.amount) || 0), 0).toLocaleString()}</span>
+              <span className="font-medium">${calculatedPartnersFunding.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">Other Funding:</span>
@@ -642,7 +664,7 @@ const ActivityBudgetForm: React.FC<ActivityBudgetFormProps> = ({
                 <span className="font-medium text-blue-600">
                   ${(Number(governmentTreasury) + 
                     Number(sdgFunding) + 
-                    partners.reduce((sum, partner) => sum + (Number(partner.amount) || 0), 0) + 
+                    calculatedPartnersFunding + 
                     Number(otherFunding)).toLocaleString()}
                 </span>
               </div>
