@@ -511,8 +511,8 @@ const EvaluatorDashboard: React.FC = () => {
             <div className="mb-4 flex justify-end">
               <button
                 onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="flex items-center px-4 py-2 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md disabled:opacity-50"
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                }`}
               >
                 {isRefreshing ? <Loader className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
                 Refresh Plans
