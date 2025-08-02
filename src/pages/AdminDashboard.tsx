@@ -616,8 +616,8 @@ const AdminDashboard: React.FC = () => {
                 <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
                   <span className="text-sm font-medium text-purple-700">Average Budget per Plan</span>
                   <span className="text-lg font-semibold text-purple-600">
-                    ${stats.totalPlans > 0 && stats.totalBudget > 0 ? 
-                      Math.round(stats.totalBudget / stats.totalPlans).toLocaleString() : '0'}
+                    ${stats.eligiblePlansForBudget > 0 && stats.totalBudget > 0 ? 
+                      Math.round(stats.totalBudget / stats.eligiblePlansForBudget).toLocaleString() : '0'}
                   </span>
                 </div>
               </div>
