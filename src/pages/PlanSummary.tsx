@@ -1,192 +1,272 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Download, FileSpreadsheet, File as FilePdf, ArrowLeft, AlertCircle, Loader, Building2, Calendar, User, CheckCircle, XCircle, ClipboardCheck, FileType, RefreshCw } from 'lucide-react';
-import { useLanguage } from '../lib/i18n/LanguageContext';
-import { plans, organizations, auth, api, initiatives, performanceMeasures, mainActivities } from '../lib/api';
-import { format } from 'date-fns';
-import { exportToExcel, exportToPDF } from '../lib/utils/export';
-import PlanReviewForm from '../components/PlanReviewForm';
-import PlanReviewTable from '../components/PlanReviewTable';
-import { isAdmin, isEvaluator, isPlanner } from '../types/user';
-import Cookies from 'js-cookie';
+import { plans, auth, objectives, initiatives, performanceMeasures, mainActivities, api } from '../lib/api';
 import axios from 'axios';
+import { useLanguage } from '../lib/i18n/LanguageContext';
+import { 
+  ArrowLeft, 
+  Download, 
+  FileSpreadsheet, 
+  File as FilePdf, 
+  AlertCircle, 
+  Loader, 
+  Building2, 
+  Calendar, 
+  User, 
+  CheckCircle, 
+  XCircle, 
+  ClipboardCheck, 
+  FileType, 
+  RefreshCw,
+  Info
+} from 'lucide-react';
+import { format } from 'date-fns';
+import { isEvaluator } from '../types/user';
 
-const PlanSummary: React.FC = () => {
-  // All hooks must be called unconditionally at the top level
-  const { t } = useLanguage();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { planId } = useParams();
-
-  // State hooks
-  const [showReviewForm, setShowReviewForm] = useState(false);
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [userOrganizations, setUserOrganizations] = useState<number[]>([]);
-  const [userOrgId, setUserOrgId] = useState<number | null>(null);
-  const [authState, setAuthState] = useState<any>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [organizationName, setOrganizationName] = useState<string>('');
-  const [loadingError, setLoadingError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-  const [processedPlanData, setProcessedPlanData] = useState<any>(null);
-  const [showTableView, setShowTableView] = useState(false);
-  const [enrichedObjectives, setEnrichedObjectives] = useState<any[]>([]);
-  const [isEnrichingData, setIsEnrichingData] = useState(false);
-  const [enrichmentError, setEnrichmentError] = useState<string | null>(null);
-  const [enrichmentProgress, setEnrichmentProgress] = useState<string>('');
-
-  // Query hooks
-  const { data: organizationsData } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: async () => {
+// Production-safe API helper with comprehensive retry logic (COPIED FROM PlanReviewTable)
+const productionSafeAPI = {
+  async fetchWithRetry(apiCall: () => Promise<any>, description: string, maxRetries = 3): Promise<any> {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await organizations.getAll();
-        return response || [];
+        console.log(`${description} - Attempt ${attempt}/${maxRetries}`);
+        
+        // Set timeout based on attempt (shorter timeouts on later attempts)
+        const timeout = Math.max(5000, 15000 - (attempt * 3000));
+        
+        const result = await Promise.race([
+          apiCall(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout)
+          )
+        ]);
+        
+        console.log(`${description} - Success on attempt ${attempt}`);
+        return result;
       } catch (error) {
-        console.error("Failed to fetch organizations:", error);
-        return [];
+        lastError = error;
+        console.warn(`${description} - Attempt ${attempt} failed:`, error);
+        
+        if (attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          console.log(`${description} - Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
       }
-    },
-    staleTime: 5 * 60 * 1000
-  });
+    }
+    
+    console.warn(`${description} - All attempts failed, returning empty data`);
+    throw lastError;
+  },
 
-  const { data: planData, isLoading, error, refetch } = useQuery({
-    queryKey: ['plan', planId, retryCount],
-    queryFn: async () => {
-      if (!planId) throw new Error("Plan ID is missing");
+  async getInitiativesForObjective(objectiveId: string): Promise<any[]> {
+    try {
+      const result = await this.fetchWithRetry(async () => {
+        const timestamp = new Date().getTime();
+        
+        // Try multiple API call strategies
+        try {
+          // Strategy 1: Standard API call
+          return await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        } catch (error1) {
+          console.warn('Strategy 1 failed, trying strategy 2...');
+          
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/strategic-initiatives/', {
+              params: { objective: objectiveId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/strategic-initiatives/`, {
+              params: { objective: objectiveId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
+        }
+      }, `Fetching initiatives for objective ${objectiveId}`);
       
-      try {
-        await auth.getCurrentUser();
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn(`Failed to fetch initiatives for objective ${objectiveId}:`, error);
+      return [];
+    }
+  },
+
+  async getPerformanceMeasuresForInitiative(initiativeId: string): Promise<any[]> {
+    try {
+      const result = await this.fetchWithRetry(async () => {
         const timestamp = new Date().getTime();
         
         try {
-          const headers = {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'X-CSRFToken': Cookies.get('csrftoken') || '',
-            'Accept': 'application/json'
-          };
-          
-          const response = await axios.get(`/api/plans/${planId}/?_=${timestamp}`, { 
-            headers,
-            withCredentials: true,
-            timeout: 10000
+          // Strategy 1: Standard API call
+          return await api.get(`/performance-measures/?initiative=${initiativeId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
           });
+        } catch (error1) {
+          console.warn('Performance measures strategy 1 failed, trying strategy 2...');
           
-          if (!response.data) throw new Error("No data received");
-          return normalizeAndProcessPlanData(response.data);
-        } catch (directError) {
-          const planResult = await plans.getById(planId);
-          if (!planResult) throw new Error("No data received");
-          return planResult;
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/performance-measures/', {
+              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Performance measures strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/performance-measures/`, {
+              params: { initiative: initiativeId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
         }
-      } catch (error: any) {
-        setLoadingError(error.message || "Failed to load plan");
-        throw error;
+      }, `Fetching performance measures for initiative ${initiativeId}`);
+      
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn(`Failed to fetch performance measures for initiative ${initiativeId}:`, error);
+      return [];
+    }
+  },
+
+  async getMainActivitiesForInitiative(initiativeId: string): Promise<any[]> {
+    try {
+      const result = await this.fetchWithRetry(async () => {
+        const timestamp = new Date().getTime();
+        
+        try {
+          // Strategy 1: Standard API call
+          return await api.get(`/main-activities/?initiative=${initiativeId}&_=${timestamp}`, {
+            timeout: 10000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        } catch (error1) {
+          console.warn('Main activities strategy 1 failed, trying strategy 2...');
+          
+          try {
+            // Strategy 2: Alternative parameter format
+            return await api.get('/main-activities/', {
+              params: { initiative: initiativeId, initiative_id: initiativeId, _: timestamp },
+              timeout: 8000,
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+          } catch (error2) {
+            console.warn('Main activities strategy 2 failed, trying strategy 3...');
+            
+            // Strategy 3: Direct axios call
+            return await axios.get(`/api/main-activities/`, {
+              params: { initiative: initiativeId },
+              timeout: 5000,
+              withCredentials: true
+            });
+          }
+        }
+      }, `Fetching main activities for initiative ${initiativeId}`);
+      
+      const data = result?.data?.results || result?.data || [];
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.warn(`Failed to fetch main activities for initiative ${initiativeId}:`, error);
+      return [];
+    }
+  }
+};
+
+const PlanSummary: React.FC = () => {
+  const { planId } = useParams<{ planId: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { t } = useLanguage();
+
+  // State
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [isUserEvaluator, setIsUserEvaluator] = useState(false);
+  const [userOrgId, setUserOrgId] = useState<number | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [enrichedObjectives, setEnrichedObjectives] = useState<any[]>([]);
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [enrichProgress, setEnrichProgress] = useState('');
+  const [hasAttemptedEnrichment, setHasAttemptedEnrichment] = useState(false);
+
+  // Fetch current user's role and organization
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      try {
+        const user = await auth.getCurrentUser();
+        if (user?.userOrganizations) {
+          setIsUserEvaluator(isEvaluator(user.userOrganizations));
+          if (user.userOrganizations.length > 0) {
+            setUserOrgId(user.userOrganizations[0].organization);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch user info:', error);
       }
+    };
+
+    fetchUserInfo();
+  }, []);
+
+  // Fetch plan data
+  const { data: planData, isLoading, error, refetch } = useQuery({
+    queryKey: ['plan', planId],
+    queryFn: async () => {
+      if (!planId) throw new Error('Plan ID is required');
+      const response = await plans.getById(planId);
+      return response;
     },
-    retry: 2,
-    retryDelay: 1000,
-    refetchOnWindowFocus: false,
-    staleTime: 0,
-    enabled: !!authState && !!planId
+    enabled: !!planId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
+  // Review plan mutation
   const reviewPlanMutation = useMutation({
     mutationFn: async (data: { status: 'APPROVED' | 'REJECTED', feedback: string }) => {
-      if (!planId) throw new Error("Plan ID is missing");
-
-      await auth.getCurrentUser();
-      await axios.get('/api/auth/csrf/', { withCredentials: true });
-      
-      const timestamp = new Date().getTime();
+      if (!planId) throw new Error('Plan ID is required');
       
       if (data.status === 'APPROVED') {
-        return api.post(`/plans/${planId}/approve/?_=${timestamp}`, { feedback: data.feedback });
+        return plans.approve(planId, data.feedback);
       } else {
-        return api.post(`/plans/${planId}/reject/?_=${timestamp}`, { feedback: data.feedback });
+        return plans.reject(planId, data.feedback);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plans', 'pending-reviews'] });
+      queryClient.invalidateQueries({ queryKey: ['plans'] });
       queryClient.invalidateQueries({ queryKey: ['plan', planId] });
       setShowReviewForm(false);
       navigate('/evaluator');
     },
-    onError: (error: any) => {
-      setLoadingError(error.message || 'Failed to submit review');
-    }
   });
 
-  // Effect hooks
-  useEffect(() => {
-    const ensureAuth = async () => {
-      try {
-        const authData = await auth.getCurrentUser();
-        if (!authData.isAuthenticated) {
-          navigate('/login');
-          return;
-        }
-        
-        setAuthState(authData);
-        
-        if (authData.userOrganizations?.length > 0) {
-          setUserRole(authData.userOrganizations[0].role);
-          setUserOrganizations(authData.userOrganizations.map(org => org.organization));
-          setUserOrgId(authData.userOrganizations[0].organization);
-        }
-        
-        const response = await axios.get('/api/auth/csrf/', { withCredentials: true });
-        const token = response.headers['x-csrftoken'] || Cookies.get('csrftoken');
-        if (token) Cookies.set('csrftoken', token, { path: '/' });
-      } catch (error) {
-        console.error("Authentication check failed:", error);
-      }
-    };
-    
-    ensureAuth();
-  }, [navigate]);
-
-  useEffect(() => {
-    if (planData) {
-      setProcessedPlanData(planData);
-      
-      if (organizationsData) {
-        try {
-          if (planData.organizationName) {
-            setOrganizationName(planData.organizationName);
-            return;
-          }
-          
-          if (planData.organization) {
-            const org = Array.isArray(organizationsData) 
-              ? organizationsData.find(o => o.id.toString() === planData.organization.toString())
-              : organizationsData.data?.find(o => o.id.toString() === planData.organization.toString());
-            
-            if (org) {
-              setOrganizationName(org.name);
-              return;
-            }
-          }
-          
-          setOrganizationName('Unknown Organization');
-        } catch (e) {
-          setOrganizationName('Unknown Organization');
-        }
-      }
-    }
-  }, [planData, organizationsData]);
-
-  // Production-safe data enrichment function
-  const enrichObjectivesWithCompleteData = async (objectivesList: any[]): Promise<any[]> => {
+  // Comprehensive data fetching function (COPIED FROM PlanReviewTable)
+  const fetchCompleteObjectiveData = async (objectivesList: any[]) => {
     if (!objectivesList || objectivesList.length === 0) {
-      console.log('No objectives to enrich');
+      console.log('No objectives to process');
       return [];
     }
 
-    console.log(`Starting to enrich ${objectivesList.length} objectives for table view`);
+    console.log(`Processing ${objectivesList.length} objectives for complete data`);
+    setEnrichProgress('Initializing data fetch...');
+    
     const enrichedObjectives = [];
 
     for (let i = 0; i < objectivesList.length; i++) {
@@ -194,160 +274,25 @@ const PlanSummary: React.FC = () => {
       if (!objective) continue;
 
       try {
-        setEnrichmentProgress(`Processing objective ${i + 1}/${objectivesList.length}: ${objective.title}`);
-        console.log(`Enriching objective ${objective.id} (${objective.title})`);
+        setEnrichProgress(`Processing objective ${i + 1}/${objectivesList.length}: ${objective.title}`);
+        console.log(`Processing objective ${objective.id} (${objective.title})`);
 
-        // Fetch ALL initiatives for this objective using comprehensive approach
-        setEnrichmentProgress(`Fetching ALL initiatives for ${objective.title}...`);
-        console.log(`Fetching ALL initiatives for objective ${objective.id} (${objective.title})`);
+        // Fetch initiatives for this objective with production-safe API
+        setEnrichProgress(`Fetching initiatives for ${objective.title}...`);
+        const objectiveInitiatives = await productionSafeAPI.getInitiativesForObjective(objective.id.toString());
         
-        let allObjectiveInitiatives = [];
-        
-        // Method 1: Direct objective initiatives with multiple strategies
-        try {
-          console.log(`Method 1: Direct initiatives for objective ${objective.id}`);
-          
-          // Try multiple API call formats for better production compatibility
-          let directInitiatives = [];
-          
-          // Strategy 1a: Standard API call
-          try {
-            const response1 = await initiatives.getByObjective(objective.id.toString());
-            directInitiatives = response1?.data || [];
-            console.log(`Strategy 1a: Found ${directInitiatives.length} direct initiatives`);
-          } catch (error1a) {
-            console.warn('Strategy 1a failed:', error1a);
-            
-            // Strategy 1b: Alternative parameter format
-            try {
-              const response1b = await axios.get('/api/strategic-initiatives/', {
-                params: { 
-                  strategic_objective: objective.id,
-                  _t: Date.now()
-                },
-                timeout: 12000,
-                withCredentials: true
-              });
-              directInitiatives = response1b.data?.results || response1b.data || [];
-              console.log(`Strategy 1b: Found ${directInitiatives.length} direct initiatives`);
-            } catch (error1b) {
-              console.warn('Strategy 1b failed:', error1b);
-              
-              // Strategy 1c: Simple parameter format
-              try {
-                const response1c = await axios.get('/api/strategic-initiatives/', {
-                  params: { objective: objective.id },
-                  timeout: 8000,
-                  withCredentials: true
-                });
-                directInitiatives = response1c.data?.results || response1c.data || [];
-                console.log(`Strategy 1c: Found ${directInitiatives.length} direct initiatives`);
-              } catch (error1c) {
-                console.warn('All direct initiative strategies failed:', error1c);
-                directInitiatives = [];
-              }
-            }
-          }
-          
-          allObjectiveInitiatives = [...directInitiatives];
-          console.log(`Total after Method 1: ${allObjectiveInitiatives.length} initiatives`);
-          
-        } catch (method1Error) {
-          console.error('Method 1 completely failed:', method1Error);
-        }
-        
-        // Method 2: Get ALL initiatives and filter by objective
-        try {
-          console.log(`Method 2: Filter all initiatives for objective ${objective.id}`);
-          
-          const allInitiativesResponse = await initiatives.getAll();
-          const allInitiatives = allInitiativesResponse?.data || [];
-          console.log(`Method 2: Got ${allInitiatives.length} total initiatives to filter`);
-          
-          // Filter initiatives that belong to this objective
-          const objectiveRelatedInitiatives = allInitiatives.filter(initiative => {
-            // Direct objective relationship
-            const matchesObjective = initiative.strategic_objective && 
-                    initiative.strategic_objective.toString() === objective.id.toString();
-            
-            // Program relationship - check if initiative's program belongs to this objective
-            const matchesProgram = initiative.program && objective.programs && Array.isArray(objective.programs) &&
-                    objective.programs.some(program => 
-                      program.id.toString() === initiative.program.toString()
-                    );
-            
-            return matchesObjective || matchesProgram;
-          });
-          
-          console.log(`Method 2: Found ${objectiveRelatedInitiatives.length} related initiatives from all initiatives`);
-          
-          // Merge with direct initiatives, avoiding duplicates
-          objectiveRelatedInitiatives.forEach(relatedInitiative => {
-            if (!allObjectiveInitiatives.find(existing => existing.id === relatedInitiative.id)) {
-              allObjectiveInitiatives.push(relatedInitiative);
-            }
-          });
-          
-          console.log(`Total after Method 2: ${allObjectiveInitiatives.length} initiatives`);
-          
-        } catch (method2Error) {
-          console.error('Method 2 failed:', method2Error);
-        }
-        
-        // Method 3: Fetch initiatives for each program under this objective
-        if (objective.programs && Array.isArray(objective.programs)) {
-          for (const program of objective.programs) {
-            try {
-              console.log(`Method 3: Fetching initiatives for program ${program.id} under objective ${objective.id}`);
-              
-              let programInitiatives = [];
-              
-              // Try multiple strategies for program initiatives
-              try {
-                const programResponse = await initiatives.getByProgram(program.id.toString());
-                programInitiatives = programResponse?.data || [];
-                console.log(`Method 3a: Found ${programInitiatives.length} initiatives for program ${program.id}`);
-              } catch (program3aError) {
-                console.warn(`Program strategy 3a failed for program ${program.id}:`, program3aError);
-                
-                try {
-                  const programResponse = await axios.get('/api/strategic-initiatives/', {
-                    params: { program: program.id },
-                    timeout: 8000,
-                    withCredentials: true
-                  });
-                  programInitiatives = programResponse.data?.results || programResponse.data || [];
-                  console.log(`Method 3b: Found ${programInitiatives.length} initiatives for program ${program.id}`);
-                } catch (program3bError) {
-                  console.warn(`Program strategy 3b failed for program ${program.id}:`, program3bError);
-                }
-              }
-              
-              // Add program initiatives to the list, avoiding duplicates
-              programInitiatives.forEach(programInitiative => {
-                if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
-                  allObjectiveInitiatives.push(programInitiative);
-                }
-              });
-              
-            } catch (programError) {
-              console.error(`Error fetching initiatives for program ${program.id}:`, programError);
-            }
-          }
-        }
-        
-        console.log(`FINAL TOTAL initiatives found for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
+        console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
 
         // Filter initiatives based on user organization
-        const filteredInitiatives = allObjectiveInitiatives.filter(initiative => 
+        const filteredInitiatives = objectiveInitiatives.filter(initiative => 
           initiative.is_default || 
           !initiative.organization || 
           initiative.organization === userOrgId
         );
-
+        
         console.log(`Filtered to ${filteredInitiatives.length} initiatives for user org ${userOrgId}`);
 
-        // Enrich each initiative with performance measures and main activities
+        // Process each initiative sequentially to avoid overwhelming the server
         const enrichedInitiatives = [];
         
         for (let j = 0; j < filteredInitiatives.length; j++) {
@@ -355,113 +300,25 @@ const PlanSummary: React.FC = () => {
           if (!initiative) continue;
 
           try {
-            setEnrichmentProgress(`Processing initiative ${j + 1}/${filteredInitiatives.length}: ${initiative.name}`);
-            console.log(`Enriching initiative ${initiative.id} (${initiative.name})`);
+            setEnrichProgress(`Processing initiative ${j + 1}/${filteredInitiatives.length}: ${initiative.name}`);
+            console.log(`Processing initiative ${initiative.id} (${initiative.name})`);
 
-            // Fetch performance measures with multiple strategies
-            let allMeasures = [];
-            try {
-              console.log(`Fetching performance measures for initiative ${initiative.id}`);
-              
-              // Strategy 1: Use API function
-              try {
-                const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
-                allMeasures = measuresResponse?.data || [];
-                console.log(`Strategy 1: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
-              } catch (measures1Error) {
-                console.warn(`Performance measures strategy 1 failed for initiative ${initiative.id}:`, measures1Error);
-                
-                // Strategy 2: Direct API call with alternative parameters
-                try {
-                  const measuresResponse = await axios.get('/api/performance-measures/', {
-                    params: { 
-                      initiative: initiative.id,
-                      initiative_id: initiative.id,
-                      _t: Date.now()
-                    },
-                    timeout: 10000,
-                    withCredentials: true
-                  });
-                  allMeasures = measuresResponse.data?.results || measuresResponse.data || [];
-                  console.log(`Strategy 2: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
-                } catch (measures2Error) {
-                  console.warn(`Performance measures strategy 2 failed for initiative ${initiative.id}:`, measures2Error);
-                  
-                  // Strategy 3: Simple parameter format
-                  try {
-                    const measuresResponse = await axios.get('/api/performance-measures/', {
-                      params: { initiative: initiative.id },
-                      timeout: 6000,
-                      withCredentials: true
-                    });
-                    allMeasures = measuresResponse.data?.results || measuresResponse.data || [];
-                    console.log(`Strategy 3: Found ${allMeasures.length} performance measures for initiative ${initiative.id}`);
-                  } catch (measures3Error) {
-                    console.warn(`All performance measures strategies failed for initiative ${initiative.id}:`, measures3Error);
-                    allMeasures = [];
-                  }
-                }
-              }
-            } catch (measuresError) {
-              console.warn(`Failed to get performance measures for initiative ${initiative.id}:`, measuresError);
-              allMeasures = [];
-            }
-            
-            // Fetch main activities with multiple strategies
-            let allActivities = [];
-            try {
-              console.log(`Fetching main activities for initiative ${initiative.id}`);
-              
-              // Strategy 1: Use API function
-              try {
-                const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
-                allActivities = activitiesResponse?.data || [];
-                console.log(`Strategy 1: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
-              } catch (activities1Error) {
-                console.warn(`Main activities strategy 1 failed for initiative ${initiative.id}:`, activities1Error);
-                
-                // Strategy 2: Direct API call with alternative parameters
-                try {
-                  const activitiesResponse = await axios.get('/api/main-activities/', {
-                    params: { 
-                      initiative: initiative.id,
-                      initiative_id: initiative.id,
-                      _t: Date.now()
-                    },
-                    timeout: 10000,
-                    withCredentials: true
-                  });
-                  allActivities = activitiesResponse.data?.results || activitiesResponse.data || [];
-                  console.log(`Strategy 2: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
-                } catch (activities2Error) {
-                  console.warn(`Main activities strategy 2 failed for initiative ${initiative.id}:`, activities2Error);
-                  
-                  // Strategy 3: Simple parameter format
-                  try {
-                    const activitiesResponse = await axios.get('/api/main-activities/', {
-                      params: { initiative: initiative.id },
-                      timeout: 6000,
-                      withCredentials: true
-                    });
-                    allActivities = activitiesResponse.data?.results || activitiesResponse.data || [];
-                    console.log(`Strategy 3: Found ${allActivities.length} main activities for initiative ${initiative.id}`);
-                  } catch (activities3Error) {
-                    console.warn(`All main activities strategies failed for initiative ${initiative.id}:`, activities3Error);
-                    allActivities = [];
-                  }
-                }
-              }
-            } catch (activitiesError) {
-              console.warn(`Failed to get main activities for initiative ${initiative.id}:`, activitiesError);
-              allActivities = [];
-            }
+            // Fetch performance measures and main activities in parallel but with production-safe API
+            const [performanceMeasuresData, mainActivitiesData] = await Promise.allSettled([
+              productionSafeAPI.getPerformanceMeasuresForInitiative(initiative.id),
+              productionSafeAPI.getMainActivitiesForInitiative(initiative.id)
+            ]);
+
+            // Handle results with fallback to empty arrays
+            const measures = performanceMeasuresData.status === 'fulfilled' ? performanceMeasuresData.value : [];
+            const activities = mainActivitiesData.status === 'fulfilled' ? mainActivitiesData.value : [];
 
             // Filter by organization
-            const filteredMeasures = allMeasures.filter(measure =>
+            const filteredMeasures = measures.filter(measure =>
               !measure.organization || measure.organization === userOrgId
             );
 
-            const filteredActivities = allActivities.filter(activity =>
+            const filteredActivities = activities.filter(activity =>
               !activity.organization || activity.organization === userOrgId
             );
 
@@ -473,9 +330,9 @@ const PlanSummary: React.FC = () => {
               main_activities: filteredActivities
             });
 
-            // Small delay to prevent server overload
+            // Small delay between initiatives to prevent server overload
             if (j < filteredInitiatives.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
 
           } catch (initiativeError) {
@@ -504,7 +361,7 @@ const PlanSummary: React.FC = () => {
 
         // Small delay between objectives
         if (i < objectivesList.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
 
       } catch (objectiveError) {
@@ -518,8 +375,8 @@ const PlanSummary: React.FC = () => {
       }
     }
 
-    console.log(`=== ENRICHMENT COMPLETE ===`);
-    console.log(`Successfully enriched ${enrichedObjectives.length} objectives`);
+    console.log(`=== PROCESSING COMPLETE ===`);
+    console.log(`Successfully processed ${enrichedObjectives.length} objectives`);
     
     const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
     const totalMeasures = enrichedObjectives.reduce((sum, obj) => 
@@ -532,155 +389,59 @@ const PlanSummary: React.FC = () => {
     return enrichedObjectives;
   };
 
-  // Trigger data enrichment when table view is requested
-  useEffect(() => {
-    const enrichDataForTableView = async () => {
-      if (!showTableView || !processedPlanData?.objectives || !userOrgId) {
-        return;
-      }
-
-      if (enrichedObjectives.length > 0) {
-        // Data already enriched
-        return;
-      }
-
-      try {
-        setIsEnrichingData(true);
-        setEnrichmentError(null);
-        setEnrichmentProgress('Starting data enrichment...');
-
-        console.log('=== STARTING TABLE VIEW DATA ENRICHMENT ===');
-        console.log('Processing plan objectives:', processedPlanData.objectives.length);
-        console.log('User org ID:', userOrgId);
-
-        const enrichedData = await enrichObjectivesWithCompleteData(processedPlanData.objectives);
-        
-        setEnrichedObjectives(enrichedData);
-        setEnrichmentProgress(`Completed loading ${enrichedData.length} objectives`);
-        
-        console.log('=== ENRICHMENT SUCCESS ===');
-        console.log('Enriched objectives set:', enrichedData.length);
-      } catch (error) {
-        console.error('Error enriching data for table view:', error);
-        setEnrichmentError(error instanceof Error ? error.message : 'Failed to load complete data');
-      } finally {
-        setIsEnrichingData(false);
-      }
-    };
-
-    enrichDataForTableView();
-  }, [showTableView, processedPlanData?.objectives, userOrgId]);
-
-  // Reset enriched data when table view is hidden
-  useEffect(() => {
-    if (!showTableView) {
-      setEnrichedObjectives([]);
-      setEnrichmentError(null);
-      setEnrichmentProgress('');
+  // Function to handle showing the table view with complete data
+  const handleShowTableView = async (forceRefresh = false) => {
+    if (!planData?.objectives || planData.objectives.length === 0) {
+      setEnrichError('No objectives found in the plan to display');
+      return;
     }
-  }, [showTableView]);
+    
+    // Reset state for fresh loading
+    if (forceRefresh || !hasAttemptedEnrichment) {
+      setEnrichedObjectives([]);
+      setHasAttemptedEnrichment(true);
+    }
+    
+    setIsEnriching(true);
+    setEnrichError(null);
+    setEnrichProgress('Starting complete data fetch...');
+    
+    try {
+      console.log('Starting comprehensive data fetch for table view');
+      console.log('Plan objectives:', planData.objectives.map(obj => ({ id: obj.id, title: obj.title })));
+      console.log('User organization ID:', userOrgId);
+      
+      // Ensure authentication
+      try {
+        await auth.getCurrentUser();
+        console.log('Authentication verified for data fetch');
+      } catch (authError) {
+        console.warn('Authentication check failed:', authError);
+        // Continue anyway as some endpoints might not require auth
+      }
+      
+      // Fetch complete data with production-safe approach
+      const enrichedObjectives = await fetchCompleteObjectiveData(planData.objectives);
+      
+      console.log('Complete data fetch finished:', enrichedObjectives.length);
+      setEnrichedObjectives(enrichedObjectives);
+      setEnrichProgress(`Completed loading ${enrichedObjectives.length} objectives`);
+      setShowPreview(true);
+    } catch (error) {
+      console.error('Error loading complete plan data:', error);
+      setEnrichError(error instanceof Error ? error.message : 'Failed to load complete plan data');
+    } finally {
+      setIsEnriching(false);
+    }
+  };
+
+  // Handle retry for enrichment
+  const handleRetryEnrichment = () => {
+    setEnrichError(null);
+    handleShowTableView(true); // Force refresh
+  };
 
   // Helper functions
-  const normalizeAndProcessPlanData = (plan: any) => {
-    if (!plan) return plan;
-    
-    const processedPlan = JSON.parse(JSON.stringify(plan));
-    
-    try {
-      // Ensure all expected arrays exist and are properly formatted
-      if (!Array.isArray(processedPlan.objectives)) {
-        processedPlan.objectives = processedPlan.objectives 
-          ? (Array.isArray(processedPlan.objectives) ? processedPlan.objectives : [processedPlan.objectives])
-          : [];
-      }
-
-      processedPlan.objectives = processedPlan.objectives.map((objective: any) => {
-        if (!objective) return objective;
-        
-        objective.initiatives = Array.isArray(objective.initiatives) 
-          ? objective.initiatives 
-          : (objective.initiatives ? [objective.initiatives] : []);
-        
-        objective.initiatives = objective.initiatives.map((initiative: any) => {
-          if (!initiative) return initiative;
-          
-          initiative.performance_measures = Array.isArray(initiative.performance_measures)
-            ? initiative.performance_measures
-            : (initiative.performance_measures ? [initiative.performance_measures] : []);
-          
-          initiative.main_activities = Array.isArray(initiative.main_activities)
-            ? initiative.main_activities
-            : (initiative.main_activities ? [initiative.main_activities] : []);
-          
-          initiative.main_activities = initiative.main_activities.map((activity: any) => {
-            if (!activity) return activity;
-            
-            activity.selected_months = Array.isArray(activity.selected_months)
-              ? activity.selected_months
-              : (activity.selected_months ? [activity.selected_months] : []);
-            
-            activity.selected_quarters = Array.isArray(activity.selected_quarters)
-              ? activity.selected_quarters
-              : (activity.selected_quarters ? [activity.selected_quarters] : []);
-            
-            return activity;
-          });
-          
-          return initiative;
-        });
-        
-        return objective;
-      });
-
-      processedPlan.reviews = Array.isArray(processedPlan.reviews)
-        ? processedPlan.reviews
-        : (processedPlan.reviews ? [processedPlan.reviews] : []);
-        
-    } catch (e) {
-      console.error('Error normalizing plan data:', e);
-    }
-    
-    return processedPlan;
-  };
-
-  const calculateTotalBudget = () => {
-    let total = 0;
-    let governmentTotal = 0;
-    let sdgTotal = 0;
-    let partnersTotal = 0;
-    let otherTotal = 0;
-
-    if (!processedPlanData?.objectives) {
-      return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
-    }
-
-    try {
-      processedPlanData.objectives.forEach((objective: any) => {
-        objective?.initiatives?.forEach((initiative: any) => {
-          initiative?.main_activities?.forEach((activity: any) => {
-            if (!activity?.budget) return;
-            
-            const cost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
-              ? Number(activity.budget.estimated_cost_with_tool || 0) 
-              : Number(activity.budget.estimated_cost_without_tool || 0);
-            
-            total += cost;
-            governmentTotal += Number(activity.budget.government_treasury || 0);
-            sdgTotal += Number(activity.budget.sdg_funding || 0);
-            partnersTotal += Number(activity.budget.partners_funding || 0);
-            otherTotal += Number(activity.budget.other_funding || 0);
-          });
-        });
-      });
-    } catch (e) {
-      console.error('Error calculating total budget:', e);
-    }
-
-    return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
-  };
-
-  const budgetTotals = calculateTotalBudget();
-
   const formatDate = (dateString: string | undefined | null) => {
     if (!dateString) return 'N/A';
     try {
@@ -707,86 +468,48 @@ const PlanSummary: React.FC = () => {
     return 'N/A';
   };
 
-  const getPlanTypeDisplay = (type: string) => type || 'N/A';
+  const calculateTotalBudget = () => {
+    let total = 0;
+    let governmentTotal = 0;
+    let sdgTotal = 0;
+    let partnersTotal = 0;
+    let otherTotal = 0;
 
-  // Event handlers
-  const handleRetry = async () => {
-    setLoadingError(null);
-    setRetryCount(prev => prev + 1);
-    try {
-      await auth.getCurrentUser();
-      await refetch();
-    } catch (error) {
-      setLoadingError("Failed to reload plan");
+    if (!planData?.objectives) {
+      return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
     }
+
+    try {
+      planData.objectives.forEach((objective: any) => {
+        objective?.initiatives?.forEach((initiative: any) => {
+          initiative?.main_activities?.forEach((activity: any) => {
+            if (!activity?.budget) return;
+            
+            const cost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
+              ? Number(activity.budget.estimated_cost_with_tool || 0) 
+              : Number(activity.budget.estimated_cost_without_tool || 0);
+            
+            total += cost;
+            governmentTotal += Number(activity.budget.government_treasury || 0);
+            sdgTotal += Number(activity.budget.sdg_funding || 0);
+            partnersTotal += Number(activity.budget.partners_funding || 0);
+            otherTotal += Number(activity.budget.other_funding || 0);
+          });
+        });
+      });
+    } catch (e) {
+      console.error('Error calculating total budget:', e);
+    }
+
+    return { total, governmentTotal, sdgTotal, partnersTotal, otherTotal };
   };
 
-  const handleRefresh = async () => {
-    setLoadingError(null);
-    setRetryCount(prev => prev + 1);
-    try {
-      await auth.getCurrentUser();
-      await refetch();
-    } catch (error) {
-      console.error("Refresh failed:", error);
-    }
-  };
-
-  const handleApprove = async () => {
-    try {
-      await auth.getCurrentUser();
-      setShowReviewForm(true);
-    } catch (error) {
-      setLoadingError('Authentication error');
-    }
-  };
+  const budgetTotals = calculateTotalBudget();
 
   const handleReviewSubmit = async (data: { status: 'APPROVED' | 'REJECTED'; feedback: string }) => {
-    if (!planId) return;
-    
-    setIsSubmitting(true);
-    try {
-      await reviewPlanMutation.mutateAsync(data);
-    } catch (error: any) {
-      setLoadingError(error.message || 'Failed to submit review');
-      setIsSubmitting(false);
-      setShowReviewForm(false);
-    }
+    await reviewPlanMutation.mutateAsync(data);
   };
 
-  const handleExportExcel = () => {
-    if (!processedPlanData?.objectives) return;
-    exportToExcel(
-      processedPlanData.objectives,
-      `plan-${new Date().toISOString().slice(0, 10)}`,
-      'en',
-      {
-        organization: organizationName,
-        planner: processedPlanData.planner_name || 'N/A',
-        fromDate: processedPlanData.from_date || 'N/A',
-        toDate: processedPlanData.to_date || 'N/A',
-        planType: processedPlanData.type || 'N/A'
-      }
-    );
-  };
-
-  const handleExportPDF = () => {
-    if (!processedPlanData?.objectives) return;
-    exportToPDF(
-      processedPlanData.objectives,
-      `plan-${new Date().toISOString().slice(0, 10)}`,
-      'en',
-      {
-        organization: organizationName,
-        planner: processedPlanData.planner_name || 'N/A',
-        fromDate: processedPlanData.from_date || 'N/A',
-        toDate: processedPlanData.to_date || 'N/A',
-        planType: processedPlanData.type || 'N/A'
-      }
-    );
-  };
-
-  // Render conditions
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -796,17 +519,15 @@ const PlanSummary: React.FC = () => {
     );
   }
 
-  if (error || loadingError) {
-    const errorMessage = loadingError || (error instanceof Error ? error.message : "An unknown error occurred");
-    
+  if (error) {
     return (
       <div className="p-8 bg-red-50 border border-red-200 rounded-lg text-center">
         <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
         <h3 className="text-lg font-medium text-red-800">Failed to load plan</h3>
-        <p className="text-red-600 mt-2">{errorMessage}</p>
+        <p className="text-red-600 mt-2">{error instanceof Error ? error.message : 'An unknown error occurred'}</p>
         <div className="mt-6 flex justify-center space-x-4">
           <button
-            onClick={handleRetry}
+            onClick={() => refetch()}
             className="px-4 py-2 bg-white border border-red-300 rounded-md text-red-700 hover:bg-red-50"
           >
             Try Again
@@ -822,7 +543,7 @@ const PlanSummary: React.FC = () => {
     );
   }
 
-  if (!processedPlanData) {
+  if (!planData) {
     return (
       <div className="p-8 bg-yellow-50 border border-yellow-200 rounded-lg text-center">
         <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
@@ -838,7 +559,6 @@ const PlanSummary: React.FC = () => {
     );
   }
 
-  // Main render
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6">
@@ -857,79 +577,44 @@ const PlanSummary: React.FC = () => {
             <h1 className="text-2xl font-bold text-gray-900">Plan Details</h1>
             <div className="flex items-center mt-1">
               <div className={`px-2 py-1 text-xs rounded ${
-                processedPlanData.status === 'DRAFT' ? 'bg-gray-100 text-gray-800' :
-                processedPlanData.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
-                processedPlanData.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
+                planData.status === 'DRAFT' ? 'bg-gray-100 text-gray-800' :
+                planData.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
+                planData.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
                 'bg-red-100 text-red-800'
               }`}>
-                {processedPlanData.status}
+                {planData.status}
               </div>
-              {processedPlanData.submitted_at && (
+              {planData.submitted_at && (
                 <span className="text-sm text-gray-500 ml-2">
-                  Submitted on {formatDate(processedPlanData.submitted_at)}
+                  Submitted on {formatDate(planData.submitted_at)}
                 </span>
               )}
             </div>
           </div>
           
           <div className="flex space-x-3">
-            {/* <button
-              onClick={handleExportExcel}
-              className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <FileSpreadsheet className="h-4 w-4 mr-2" />
-              Export Excel
-            </button> */}
-            
-            <button
-              onClick={() => {
-                if (!showTableView) {
-                  // Reset enriched data when opening table view to force fresh fetch
-                  setEnrichedObjectives([]);
-                  setEnrichmentError(null);
-                }
-                setShowTableView(!showTableView);
-              }}
-              className={`flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium ${
-                showTableView 
-                  ? 'bg-blue-50 text-blue-700 border-blue-300' 
-                  : 'text-gray-700 bg-white hover:bg-gray-50'
-              }`}
-              disabled={isEnrichingData}
-            >
-              {isEnrichingData ? (
-                <>
+            {/* Show Table View Button */}
+            {planData.objectives && planData.objectives.length > 0 && (
+              isEnriching ? (
+                <div className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-gray-50">
                   <Loader className="h-4 w-4 mr-2 animate-spin" />
-                  Enriching Data...
-                </>
+                  Loading Complete Data...
+                </div>
               ) : (
-                <>
+                <button
+                  onClick={() => handleShowTableView()}
+                  disabled={isEnriching}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                >
                   <ClipboardCheck className="h-4 w-4 mr-2" />
-                  {showTableView ? 'Hide Table View' : 'Show Table View'}
-                </>
-              )}
-            </button>
-            
-            {processedPlanData.status === 'SUBMITTED' && (
-              <button
-                onClick={handleRefresh}
-                className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 flex items-center"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Check Again
-              </button>
+                  Show Complete Table View
+                </button>
+              )
             )}
-            {/* <button
-              onClick={handleExportPDF}
-              className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 flex items-center"
-            >
-              <FilePdf className="h-4 w-4 mr-2" />
-              Export PDF
-            </button> */}
             
-            {processedPlanData.status === 'SUBMITTED' && isEvaluator(authState?.userOrganizations) && (
+            {planData.status === 'SUBMITTED' && isUserEvaluator && (
               <button
-                onClick={handleApprove}
+                onClick={() => setShowReviewForm(true)}
                 className="flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
               >
                 <ClipboardCheck className="h-4 w-4 mr-2" />
@@ -940,35 +625,30 @@ const PlanSummary: React.FC = () => {
         </div>
 
         {/* Show enrichment progress */}
-        {isEnrichingData && (
+        {isEnriching && (
           <div className="mb-6 bg-blue-50 p-4 rounded-lg border border-blue-200">
             <div className="flex items-center">
               <Loader className="h-5 w-5 animate-spin text-blue-600 mr-3" />
               <div>
                 <p className="text-blue-800 font-medium">Loading Complete Plan Data</p>
-                <p className="text-blue-600 text-sm">{enrichmentProgress}</p>
+                <p className="text-blue-600 text-sm">{enrichProgress}</p>
               </div>
             </div>
           </div>
         )}
 
         {/* Show enrichment error */}
-        {enrichmentError && (
+        {enrichError && (
           <div className="mb-6 bg-red-50 p-4 rounded-lg border border-red-200">
             <div className="flex items-center">
               <AlertCircle className="h-5 w-5 text-red-500 mr-3" />
               <div>
                 <p className="text-red-800 font-medium">Failed to Load Complete Data</p>
-                <p className="text-red-600 text-sm">{enrichmentError}</p>
+                <p className="text-red-600 text-sm">{enrichError}</p>
               </div>
             </div>
             <button
-              onClick={() => {
-                setEnrichedObjectives([]);
-                setEnrichmentError(null);
-                setShowTableView(false);
-                setTimeout(() => setShowTableView(true), 100);
-              }}
+              onClick={handleRetryEnrichment}
               className="mt-2 px-3 py-1 bg-white border border-red-300 rounded text-red-700 hover:bg-red-50 text-sm"
             >
               Retry Loading
@@ -976,63 +656,8 @@ const PlanSummary: React.FC = () => {
           </div>
         )}
 
-        {/* Table View */}
-        {showTableView && !isEnrichingData && (
-          <div className="mb-8">
-            {enrichedObjectives.length > 0 ? (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
-                  <h2 className="text-lg font-medium text-gray-900">Complete Plan Table View</h2>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Detailed view showing all objectives, initiatives, measures, and activities
-                  </p>
-                </div>
-                <div className="p-6">
-                  <PlanReviewTable
-                    objectives={enrichedObjectives}
-                    onSubmit={async () => {}}
-                    isSubmitting={false}
-                    organizationName={organizationName}
-                    plannerName={processedPlanData.planner_name || 'N/A'}
-                    fromDate={processedPlanData.from_date || ''}
-                    toDate={processedPlanData.to_date || ''}
-                    planType={processedPlanData.type || 'N/A'}
-                    isPreviewMode={true}
-                    userOrgId={userOrgId}
-                    isViewOnly={true}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-200">
-                <div className="flex items-center">
-                  <AlertCircle className="h-5 w-5 text-yellow-500 mr-3" />
-                  <div>
-                    <p className="text-yellow-800 font-medium">No Complete Data Available</p>
-                    <p className="text-yellow-600 text-sm">
-                      {processedPlanData.objectives?.length === 0 
-                        ? "No objectives found in this plan."
-                        : "The objectives don't have complete data (initiatives, measures, or activities)."}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setEnrichedObjectives([]);
-                    setEnrichmentError(null);
-                    setShowTableView(false);
-                    setTimeout(() => setShowTableView(true), 100);
-                  }}
-                  className="mt-3 px-3 py-1 bg-white border border-yellow-300 rounded text-yellow-700 hover:bg-yellow-50 text-sm"
-                >
-                  Retry Loading Data
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="space-y-8">
+          {/* Organization Information */}
           <div className="border-b border-gray-200 pb-6">
             <h2 className="text-lg font-medium text-gray-900 mb-4">Organization Information</h2>
             <div className="grid grid-cols-2 gap-6">
@@ -1040,21 +665,21 @@ const PlanSummary: React.FC = () => {
                 <Building2 className="h-5 w-5 text-gray-400 mt-0.5 mr-2" />
                 <div>
                   <p className="text-sm text-gray-500">Organization Name</p>
-                  <p className="font-medium">{organizationName}</p>
+                  <p className="font-medium">{planData.organization_name || 'N/A'}</p>
                 </div>
               </div>
               <div className="flex items-start">
                 <User className="h-5 w-5 text-gray-400 mt-0.5 mr-2" />
                 <div>
                   <p className="text-sm text-gray-500">Planner</p>
-                  <p className="font-medium">{processedPlanData.planner_name || 'N/A'}</p>
+                  <p className="font-medium">{planData.planner_name || 'N/A'}</p>
                 </div>
               </div>
               <div className="flex items-start">
                 <FileType className="h-5 w-5 text-gray-400 mt-0.5 mr-2" />
                 <div>
                   <p className="text-sm text-gray-500">Plan Type</p>
-                  <p className="font-medium">{getPlanTypeDisplay(processedPlanData.type)}</p>
+                  <p className="font-medium">{planData.type || 'N/A'}</p>
                 </div>
               </div>
               <div className="flex items-start">
@@ -1062,47 +687,48 @@ const PlanSummary: React.FC = () => {
                 <div>
                   <p className="text-sm text-gray-500">Planning Period</p>
                   <p className="font-medium">
-                    {formatDate(processedPlanData.from_date)} - {formatDate(processedPlanData.to_date)}
+                    {formatDate(planData.from_date)} - {formatDate(planData.to_date)}
                   </p>
                 </div>
               </div>
             </div>
           </div>
 
-          {processedPlanData.reviews?.length > 0 && (
+          {/* Evaluator Feedback */}
+          {planData.reviews && planData.reviews.length > 0 && (
             <div className="border-b border-gray-200 pb-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">Evaluator Feedback</h2>
               <div className={`p-4 rounded-lg ${
-                processedPlanData.status === 'APPROVED' ? 'bg-green-50 border border-green-200' : 
-                processedPlanData.status === 'REJECTED' ? 'bg-red-50 border border-red-200' : 
+                planData.status === 'APPROVED' ? 'bg-green-50 border border-green-200' : 
+                planData.status === 'REJECTED' ? 'bg-red-50 border border-red-200' : 
                 'bg-gray-50 border border-gray-200'
               }`}>
                 <div className="flex items-start">
-                  {processedPlanData.status === 'APPROVED' ? (
-                    <CheckCircle className={`h-5 w-5 mr-2 text-green-500 mt-0.5`} />
-                  ) : processedPlanData.status === 'REJECTED' ? (
-                    <XCircle className={`h-5 w-5 mr-2 text-red-500 mt-0.5`} />
+                  {planData.status === 'APPROVED' ? (
+                    <CheckCircle className="h-5 w-5 mr-2 text-green-500 mt-0.5" />
+                  ) : planData.status === 'REJECTED' ? (
+                    <XCircle className="h-5 w-5 mr-2 text-red-500 mt-0.5" />
                   ) : (
                     <div className="h-5 w-5 mr-2" />
                   )}
                   <div>
                     <p className={`font-medium ${
-                      processedPlanData.status === 'APPROVED' ? 'text-green-700' : 
-                      processedPlanData.status === 'REJECTED' ? 'text-red-700' : 
+                      planData.status === 'APPROVED' ? 'text-green-700' : 
+                      planData.status === 'REJECTED' ? 'text-red-700' : 
                       'text-gray-700'
                     }`}>
-                      {processedPlanData.status === 'APPROVED' ? 'Plan Approved' : 
-                       processedPlanData.status === 'REJECTED' ? 'Plan Rejected' :
+                      {planData.status === 'APPROVED' ? 'Plan Approved' : 
+                       planData.status === 'REJECTED' ? 'Plan Rejected' :
                        'Pending Review'}
                     </p>
-                    {processedPlanData.reviews[0]?.feedback && (
+                    {planData.reviews[0]?.feedback && (
                       <p className="mt-1 text-gray-600">
-                        {processedPlanData.reviews[0].feedback}
+                        {planData.reviews[0].feedback}
                       </p>
                     )}
-                    {processedPlanData.reviews[0]?.reviewed_at && (
+                    {planData.reviews[0]?.reviewed_at && (
                       <p className="mt-2 text-sm text-gray-500">
-                        Reviewed on {formatDate(processedPlanData.reviews[0].reviewed_at)} by {processedPlanData.reviews[0].evaluator_name || 'Evaluator'}
+                        Reviewed on {formatDate(planData.reviews[0].reviewed_at)} by {planData.reviews[0].evaluator_name || 'Evaluator'}
                       </p>
                     )}
                   </div>
@@ -1111,18 +737,19 @@ const PlanSummary: React.FC = () => {
             </div>
           )}
 
+          {/* Summary Statistics */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white p-4 rounded-lg border border-gray-200">
               <h3 className="text-sm font-medium text-gray-500">Total Objectives</h3>
               <p className="mt-2 text-3xl font-semibold text-gray-900">
-                {processedPlanData.objectives?.length || 0}
+                {planData.objectives?.length || 0}
               </p>
             </div>
             
             <div className="bg-white p-4 rounded-lg border border-gray-200">
               <h3 className="text-sm font-medium text-gray-500">Total Initiatives</h3>
               <p className="mt-2 text-3xl font-semibold text-gray-900">
-                {processedPlanData.objectives?.reduce((total: number, obj: any) => 
+                {planData.objectives?.reduce((total: number, obj: any) => 
                   total + (obj?.initiatives?.length || 0), 0) || 0}
               </p>
             </div>
@@ -1130,7 +757,7 @@ const PlanSummary: React.FC = () => {
             <div className="bg-white p-4 rounded-lg border border-gray-200">
               <h3 className="text-sm font-medium text-gray-500">Total Activities</h3>
               <p className="mt-2 text-3xl font-semibold text-gray-900">
-                {processedPlanData.objectives?.reduce((total: number, obj: any) => 
+                {planData.objectives?.reduce((total: number, obj: any) => 
                   total + (obj?.initiatives?.reduce((sum: number, init: any) => 
                     sum + (init?.main_activities?.length || 0), 0) || 0), 0) || 0}
               </p>
@@ -1146,15 +773,16 @@ const PlanSummary: React.FC = () => {
             </div>
           </div>
 
+          {/* Strategic Objectives */}
           <div>
             <h2 className="text-lg font-medium text-gray-900 mb-4">Strategic Objectives</h2>
-            {!processedPlanData.objectives?.length ? (
+            {!planData.objectives?.length ? (
               <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
                 <p className="text-gray-500">No strategic objectives found for this plan.</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {processedPlanData.objectives.map((objective: any, index: number) => (
+                {planData.objectives.map((objective: any, index: number) => (
                   <div key={objective?.id || `obj-${index}`} className="border border-gray-200 rounded-lg p-4">
                     <div className="flex justify-between items-start mb-3">
                       <div>
@@ -1267,18 +895,118 @@ const PlanSummary: React.FC = () => {
         </div>
       </div>
 
+      {/* Table View Modal */}
+      {showPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-gray-900">Complete Plan Review</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleShowTableView(true)}
+                  disabled={isEnriching}
+                  className="flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {isEnriching ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Refreshing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Refresh Data
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowPreview(false)}
+                  className="text-gray-400 hover:text-gray-500 focus:outline-none"
+                >
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              {isEnriching ? (
+                <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg border border-gray-200">
+                  <Loader className="h-10 w-10 text-blue-600 animate-spin mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Complete Plan Data</h3>
+                  <p className="text-gray-600 text-center mb-4">{enrichProgress}</p>
+                  <div className="w-full max-w-md bg-gray-200 rounded-full h-2">
+                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: '50%' }}></div>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Fetching objectives, initiatives, performance measures, and activities...
+                  </p>
+                </div>
+              ) : enrichError ? (
+                <div className="p-8 bg-red-50 border border-red-200 rounded-lg text-center">
+                  <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-red-800 mb-2">Failed to Load Complete Plan Data</h3>
+                  <p className="text-red-600 mb-4">{enrichError}</p>
+                  <div className="flex justify-center space-x-4">
+                    <button
+                      onClick={handleRetryEnrichment}
+                      className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 flex items-center"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Retry Loading
+                    </button>
+                  </div>
+                </div>
+              ) : enrichedObjectives.length > 0 ? (
+                <PlanReviewTable
+                  objectives={enrichedObjectives}
+                  onSubmit={async () => {}}
+                  isSubmitting={false}
+                  organizationName={planData.organization_name || 'N/A'}
+                  plannerName={planData.planner_name || 'N/A'}
+                  fromDate={planData.from_date || ''}
+                  toDate={planData.to_date || ''}
+                  planType={planData.type || 'N/A'}
+                  isPreviewMode={true}
+                  userOrgId={userOrgId}
+                />
+              ) : (
+                <div className="p-8 bg-yellow-50 rounded-lg border border-yellow-200 text-center">
+                  <Info className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-yellow-800 mb-2">No Complete Data Available</h3>
+                  <p className="text-yellow-700 mb-4">
+                    {planData?.objectives?.length === 0 
+                      ? "No objectives were found for this plan."
+                      : "The objectives exist but don't have complete data. Please try refreshing."
+                    }
+                  </p>
+                  <button
+                    onClick={handleRetryEnrichment}
+                    className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors"
+                  >
+                    <RefreshCw className="h-4 w-4 inline mr-2" /> Load Complete Data
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Form Modal */}
       {showReviewForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Review Plan: {organizationName}
+              Review Plan: {planData.organization_name}
             </h3>
             
             <PlanReviewForm
-              plan={processedPlanData}
+              plan={planData}
               onSubmit={handleReviewSubmit}
               onCancel={() => setShowReviewForm(false)}
-              isSubmitting={isSubmitting || reviewPlanMutation.isPending}
+              isSubmitting={reviewPlanMutation.isPending}
             />
           </div>
         </div>
