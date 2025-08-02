@@ -396,72 +396,121 @@ const PlanSummary: React.FC = () => {
     
     setIsEnriching(true);
     setEnrichError(null);
-    setEnrichProgress('Starting complete data fetch...');
+    setEnrichProgress('Fetching ALL objectives from system...');
     
     try {
-      console.log('Fetching ALL objectives independently for complete data');
+      console.log('=== STARTING COMPLETE DATA FETCH ===');
       console.log('User organization ID:', userOrgId);
       
-      // Step 1: Fetch ALL objectives independently (not from plan data)
-      setEnrichProgress('Fetching all objectives...');
-      let allObjectives = [];
+      // Step 1: Get ALL objectives from the system (not from incomplete plan data)
+      setEnrichProgress('Loading all objectives from database...');
+      let allSystemObjectives = [];
       
       try {
-        const objectivesResponse = await objectives.getAll();
-        allObjectives = objectivesResponse?.data || [];
-        console.log(`Fetched ${allObjectives.length} total objectives from system`);
+        // Use multiple strategies to fetch ALL objectives
+        let objectivesResponse;
+        
+        try {
+          // Strategy 1: Standard call
+          objectivesResponse = await objectives.getAll();
+        } catch (error1) {
+          console.warn('Strategy 1 failed, trying direct API call...');
+          // Strategy 2: Direct API call
+          objectivesResponse = await api.get('/strategic-objectives/', {
+            timeout: 15000,
+            headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+          });
+        }
+        
+        allSystemObjectives = objectivesResponse?.data || [];
+        console.log(`Successfully fetched ${allSystemObjectives.length} total objectives from system`);
+        
+        if (!Array.isArray(allSystemObjectives)) {
+          throw new Error('Objectives data is not an array');
+        }
       } catch (error) {
-        console.error('Failed to fetch objectives:', error);
-        setEnrichError('Failed to fetch objectives from system');
+        console.error('Failed to fetch all objectives:', error);
+        setEnrichError('Failed to fetch objectives from database. Please refresh the page.');
         return;
       }
       
-      if (!allObjectives || allObjectives.length === 0) {
-        setEnrichError('No objectives found in the system');
+      if (allSystemObjectives.length === 0) {
+        setEnrichError('No objectives found in the system database');
         return;
       }
       
-      // Step 2: Filter objectives that are selected in this plan
-      let planObjectives = allObjectives;
+      console.log('Available objectives:', allSystemObjectives.map(obj => ({
+        id: obj.id,
+        title: obj.title,
+        weight: obj.weight,
+        planner_weight: obj.planner_weight
+      })));
       
-      // If plan has selected_objectives, use only those
+      // Step 2: Determine which objectives belong to this plan
+      setEnrichProgress('Determining plan-specific objectives...');
+      let planSpecificObjectives = [];
+      
       if (planData?.selected_objectives && planData.selected_objectives.length > 0) {
+        // Multi-objective plan - use selected_objectives
         const selectedObjectiveIds = planData.selected_objectives.map(obj => 
           typeof obj === 'object' ? obj.id : obj
         );
-        planObjectives = allObjectives.filter(obj => 
+        planSpecificObjectives = allSystemObjectives.filter(obj => 
           selectedObjectiveIds.includes(obj.id)
         );
-        console.log(`Filtered to ${planObjectives.length} plan-specific objectives`);
+        console.log(`Multi-objective plan: filtered to ${planSpecificObjectives.length} objectives from selected_objectives`);
       } else if (planData?.strategic_objective) {
-        // If plan has single strategic_objective, use only that one
-        planObjectives = allObjectives.filter(obj => 
+        // Single-objective plan - use strategic_objective
+        planSpecificObjectives = allSystemObjectives.filter(obj => 
           obj.id === planData.strategic_objective || 
           obj.id.toString() === planData.strategic_objective.toString()
         );
-        console.log(`Filtered to single objective: ${planData.strategic_objective}`);
+        console.log(`Single-objective plan: filtered to objective ${planData.strategic_objective}`);
       } else if (planData?.objectives && planData.objectives.length > 0) {
-        // If plan has objectives array, use those IDs
+        // Fallback - use objectives array from plan data
         const planObjectiveIds = planData.objectives.map(obj => obj.id);
-        planObjectives = allObjectives.filter(obj => 
+        planSpecificObjectives = allSystemObjectives.filter(obj => 
           planObjectiveIds.includes(obj.id)
         );
-        console.log(`Filtered to ${planObjectives.length} objectives from plan data`);
+        console.log(`Using plan objectives: filtered to ${planSpecificObjectives.length} objectives`);
+      } else {
+        // Last resort - show all objectives (shouldn't happen)
+        console.warn('No objective selection criteria found, showing all objectives');
+        planSpecificObjectives = allSystemObjectives;
       }
       
-      if (planObjectives.length === 0) {
-        setEnrichError('No objectives found for this plan');
+      if (planSpecificObjectives.length === 0) {
+        setEnrichError('No objectives found for this specific plan');
         return;
       }
       
-      console.log('Plan objectives to process:', planObjectives.map(obj => ({ id: obj.id, title: obj.title })));
+      console.log('Plan-specific objectives to process:', planSpecificObjectives.map(obj => ({ 
+        id: obj.id, 
+        title: obj.title,
+        weight: obj.weight,
+        planner_weight: obj.planner_weight
+      })));
 
-      // Step 3: Use the EXACT same function as PlanReviewTable with fresh objectives
-      const enrichedObjectives = await fetchCompleteData(planObjectives, userOrgId);
+      // Step 3: Use the EXACT same fetchCompleteData function as PlanReviewTable
+      setEnrichProgress('Processing objectives with complete data...');
+      console.log('=== STARTING fetchCompleteData WITH FRESH OBJECTIVES ===');
       
-      console.log('Complete data fetch finished:', enrichedObjectives.length);
+      const enrichedObjectives = await fetchCompleteData(planSpecificObjectives, userOrgId);
+      
+      console.log('=== fetchCompleteData COMPLETED ===');
+      console.log('Final enriched objectives:', enrichedObjectives.length);
+      
+      // Log summary of what we got
+      enrichedObjectives.forEach((obj, index) => {
+        const initiativesCount = obj.initiatives?.length || 0;
+        const measuresCount = obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0;
+        const activitiesCount = obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0;
+        
+        console.log(`Objective ${index + 1}: ${obj.title} - ${initiativesCount} initiatives, ${measuresCount} measures, ${activitiesCount} activities`);
+      });
+      
       setEnrichedObjectives(enrichedObjectives);
-      setEnrichProgress(`Completed loading ${enrichedObjectives.length} objectives`);
+      setEnrichProgress(`Successfully loaded ${enrichedObjectives.length} objectives with complete data`);
       setShowPreview(true);
     } catch (error) {
       console.error('Error loading complete plan data:', error);
@@ -1006,6 +1055,7 @@ const PlanSummary: React.FC = () => {
                   planType={planData.type || 'N/A'}
                   isPreviewMode={true}
                   userOrgId={userOrgId}
+                  isViewOnly={true}
                 />
               ) : (
                 <div className="p-8 bg-yellow-50 rounded-lg border border-yellow-200 text-center">
