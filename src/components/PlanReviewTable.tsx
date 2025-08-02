@@ -22,6 +22,193 @@ interface PlanReviewTableProps {
   isViewOnly?: boolean;
 }
 
+// Helper function to fetch initiatives for an objective with production error handling
+const fetchInitiativesForObjective = async (objectiveId: string | number): Promise<any[]> => {
+  const strategies = [
+    // Strategy 1: Standard format with short timeout
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      
+      try {
+        const response = await api.get(`/strategic-initiatives/?objective=${objectiveId}&_=${Date.now()}`, {
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    
+    // Strategy 2: Alternative parameter format
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      
+      try {
+        const response = await api.get('/strategic-initiatives/', {
+          params: { objective_id: objectiveId, _: Date.now() },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+
+    // Strategy 3: Get all and filter (with very short timeout)
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      
+      try {
+        const response = await api.get('/strategic-initiatives/', {
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        
+        const allInitiatives = Array.isArray(response.data) ? response.data : (response.data.results || []);
+        return allInitiatives.filter(init => 
+          init.strategic_objective && init.strategic_objective.toString() === objectiveId.toString()
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+  ];
+
+  // Try each strategy in sequence
+  for (let i = 0; i < strategies.length; i++) {
+    try {
+      console.log(`PlanReviewTable: Trying strategy ${i + 1} for objective ${objectiveId} initiatives`);
+      const result = await strategies[i]();
+      if (Array.isArray(result) && result.length >= 0) {
+        console.log(`PlanReviewTable: Strategy ${i + 1} succeeded, found ${result.length} initiatives for objective ${objectiveId}`);
+        return result;
+      }
+    } catch (error) {
+      console.warn(`PlanReviewTable: Strategy ${i + 1} failed for objective ${objectiveId}:`, error.message || error);
+      if (i === strategies.length - 1) {
+        console.warn(`PlanReviewTable: All strategies failed for objective ${objectiveId}, returning empty array`);
+      }
+    }
+  }
+
+  return [];
+};
+
+// Helper function to fetch performance measures for an initiative
+const fetchPerformanceMeasuresForInitiative = async (initiativeId: string | number): Promise<any[]> => {
+  const strategies = [
+    // Strategy 1: Standard format
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      
+      try {
+        const response = await api.get(`/performance-measures/?initiative=${initiativeId}&_=${Date.now()}`, {
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    
+    // Strategy 2: Alternative parameter format
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      
+      try {
+        const response = await api.get('/performance-measures/', {
+          params: { initiative_id: initiativeId },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+  ];
+
+  for (let i = 0; i < strategies.length; i++) {
+    try {
+      const result = await strategies[i]();
+      if (Array.isArray(result)) {
+        console.log(`PlanReviewTable: Found ${result.length} performance measures for initiative ${initiativeId}`);
+        return result;
+      }
+    } catch (error) {
+      console.warn(`PlanReviewTable: Performance measures strategy ${i + 1} failed for initiative ${initiativeId}:`, error.message || error);
+    }
+  }
+
+  console.warn(`PlanReviewTable: All performance measures strategies failed for initiative ${initiativeId}`);
+  return [];
+};
+
+// Helper function to fetch main activities for an initiative
+const fetchMainActivitiesForInitiative = async (initiativeId: string | number): Promise<any[]> => {
+  const strategies = [
+    // Strategy 1: Standard format
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      
+      try {
+        const response = await api.get(`/main-activities/?initiative=${initiativeId}&_=${Date.now()}`, {
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    
+    // Strategy 2: Alternative parameter format
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      
+      try {
+        const response = await api.get('/main-activities/', {
+          params: { initiative_id: initiativeId },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return Array.isArray(response.data) ? response.data : (response.data.results || []);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+  ];
+
+  for (let i = 0; i < strategies.length; i++) {
+    try {
+      const result = await strategies[i]();
+      if (Array.isArray(result)) {
+        console.log(`PlanReviewTable: Found ${result.length} main activities for initiative ${initiativeId}`);
+        return result;
+      }
+    } catch (error) {
+      console.warn(`PlanReviewTable: Main activities strategy ${i + 1} failed for initiative ${initiativeId}:`, error.message || error);
+    }
+  }
+
+  console.warn(`PlanReviewTable: All main activities strategies failed for initiative ${initiativeId}`);
+  return [];
+};
+
 const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
   objectives,
   onSubmit,
@@ -269,285 +456,130 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     return processedObjectives;
   };
 
-  // Comprehensive data fetching function
+  // Enhanced data fetching with production error handling
   const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
     if (!objectivesList || !Array.isArray(objectivesList) || objectivesList.length === 0) {
       console.log('PlanReviewTable: No objectives to process');
       return [];
     }
 
-    try {
-      console.log('PlanReviewTable: Fetching complete data for objectives:', objectivesList.length);
-      
-      const enrichedObjectives = await Promise.all(
-        objectivesList.map(async (objective) => {
-          try {
-            // Fetch ALL initiatives for this objective using multiple approaches
-            console.log(`PlanReviewTable: Fetching ALL initiatives for objective ${objective.id} (${objective.title})`);
+    console.log(`PlanReviewTable: Starting to fetch data for ${objectivesList.length} objectives`);
+    
+    const processedObjectives = [];
+    
+    // Process objectives sequentially to avoid overwhelming the server
+    for (const objective of objectivesList) {
+      if (!objective || !objective.id) {
+        console.warn('PlanReviewTable: Skipping invalid objective');
+        processedObjectives.push({
+          ...objective,
+          initiatives: []
+        });
+        continue;
+      }
+
+      console.log(`PlanReviewTable: Processing objective ${objective.id} (${objective.title})`);
+
+      try {
+        // Fetch initiatives with production-friendly approach
+        const initiativesData = await fetchInitiativesForObjective(objective.id);
+        
+        // Filter initiatives by organization if needed
+        const filteredInitiatives = Array.isArray(initiativesData) ? 
+          initiativesData.filter(initiative => {
+            if (!initiative) return false;
             
-            // Method 1: Direct objective initiatives
-            let directInitiativesResponse;
-            try {
-              // Add cache busting for production
-              const timestamp = new Date().getTime();
-              directInitiativesResponse = await initiatives.getByObjective(objective.id.toString());
-            } catch (directError) {
-              console.warn(`PlanReviewTable: Failed to fetch direct initiatives for objective ${objective.id}:`, directError);
-              directInitiativesResponse = { data: [] };
-            }
+            // Always include default initiatives
+            if (initiative.is_default) return true;
             
-            let allObjectiveInitiatives = directInitiativesResponse?.data || [];
-            console.log(`PlanReviewTable: Found ${allObjectiveInitiatives.length} direct initiatives for objective ${objective.id}`);
+            // Include initiatives with no organization (legacy data)
+            if (!initiative.organization) return true;
             
-            // Method 2: Get all initiatives and filter by strategic_objective
-            try {
-              // Add cache busting and timeout for production
-              const allInitiativesResponse = await Promise.race([
-                initiatives.getAll(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
-              ]);
-              const allInitiatives = allInitiativesResponse?.data || [];
-              
-              // Filter initiatives that belong to this objective (either directly or through programs)
-              const objectiveRelatedInitiatives = allInitiatives.filter(initiative => {
-                // Direct objective relationship
-                if (initiative.strategic_objective && 
-                    initiative.strategic_objective.toString() === objective.id.toString()) {
-                  return true;
-                }
-                
-                // Program relationship - check if initiative's program belongs to this objective
-                if (initiative.program && objective.programs && Array.isArray(objective.programs)) {
-                  return objective.programs.some(program => 
-                    program.id.toString() === initiative.program.toString()
-                  );
-                }
-                
-                return false;
-              });
-              
-              console.log(`PlanReviewTable: Found ${objectiveRelatedInitiatives.length} related initiatives from all initiatives for objective ${objective.id}`);
-              
-              // Merge with direct initiatives, avoiding duplicates
-              objectiveRelatedInitiatives.forEach(relatedInitiative => {
-                if (!allObjectiveInitiatives.find(existing => existing.id === relatedInitiative.id)) {
-                  allObjectiveInitiatives.push(relatedInitiative);
-                }
-              });
-              
-            } catch (allInitiativesError) {
-              console.error('PlanReviewTable: Error fetching all initiatives:', allInitiativesError);
-            }
+            // Include initiatives belonging to current user's organization
+            if (currentUserOrgId && initiative.organization === currentUserOrgId) return true;
             
-            // Method 3: Also check if the objective has programs and fetch initiatives for those programs
-            if (objective.programs && Array.isArray(objective.programs)) {
-              for (const program of objective.programs) {
-                try {
-                  console.log(`PlanReviewTable: Fetching initiatives for program ${program.id} under objective ${objective.id}`);
-                  // Add timeout for production
-                  const programInitiativesResponse = await Promise.race([
-                    initiatives.getByProgram(program.id.toString()),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-                  ]);
-                  const programInitiatives = programInitiativesResponse?.data || [];
-                  console.log(`PlanReviewTable: Found ${programInitiatives.length} initiatives for program ${program.id}`);
-                  
-                  // Add program initiatives to the list, avoiding duplicates
-                  programInitiatives.forEach(programInitiative => {
-                    if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
-                      allObjectiveInitiatives.push(programInitiative);
-                    }
-                  });
-                } catch (programError) {
-                  console.error(`PlanReviewTable: Error fetching initiatives for program ${program.id}:`, programError);
-                }
-              }
-            }
-            
-            console.log(`PlanReviewTable: TOTAL initiatives found for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
+            // In production, be more permissive
+            return !currentUserOrgId;
+          }) : [];
 
-            // Filter initiatives based on user organization
-            const filteredInitiatives = allObjectiveInitiatives.filter(initiative => {
-              // In production, be more permissive with filtering
-              if (!initiative) return false;
-              
-              // Always include default initiatives
-              if (initiative.is_default) return true;
-              
-              // Include initiatives with no organization (legacy data)
-              if (!initiative.organization) return true;
-              
-              // Include initiatives belonging to current user's organization
-              if (currentUserOrgId && initiative.organization === currentUserOrgId) return true;
-              
-              // In production, also include if we can't determine organization (be permissive)
-              return !currentUserOrgId;
-            });
-            
-            console.log(`PlanReviewTable: Filtered initiatives for user org ${currentUserOrgId}: ${filteredInitiatives.length} out of ${allObjectiveInitiatives.length}`);
+        console.log(`PlanReviewTable: Filtered ${filteredInitiatives.length} initiatives for objective ${objective.id}`);
 
-            // For each initiative, fetch performance measures and main activities
-            const enrichedInitiatives = await Promise.all(
-              filteredInitiatives.map(async (initiative) => {
-                try {
-                  console.log(`PlanReviewTable: Fetching data for initiative ${initiative.id} (${initiative.name})`);
-                  
-                  // Fetch performance measures with multiple fallback strategies
-                  let measuresResponse = { data: [] };
-                  try {
-                    // Strategy 1: Direct API call with timeout
-                    measuresResponse = await Promise.race([
-                      performanceMeasures.getByInitiative(initiative.id),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-                    ]);
-                  } catch (measuresError) {
-                    console.warn(`PlanReviewTable: Strategy 1 failed for initiative ${initiative.id}:`, measuresError);
-                    
-                    // Strategy 2: Try with different parameter format
-                    try {
-                      const response = await Promise.race([
-                        api.get(`/performance-measures/`, { params: { initiative: initiative.id } }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-                      ]);
-                      measuresResponse = { data: response.data?.results || response.data || [] };
-                    } catch (fallbackError) {
-                      console.warn(`PlanReviewTable: Strategy 2 failed for initiative ${initiative.id}:`, fallbackError);
-                      
-                      // Strategy 3: Try direct endpoint
-                      try {
-                        const directResponse = await Promise.race([
-                          api.get(`/performance-measures/?initiative_id=${initiative.id}`),
-                          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
-                        ]);
-                        measuresResponse = { data: directResponse.data?.results || directResponse.data || [] };
-                      } catch (directError) {
-                        console.warn(`PlanReviewTable: All strategies failed for initiative ${initiative.id}, using empty data`);
-                        measuresResponse = { data: [] };
-                      }
-                    }
-                  }
-                  
-                  const allMeasures = measuresResponse?.data || [];
-                  console.log(`PlanReviewTable: Found ${allMeasures.length} measures for initiative ${initiative.id}`);
-                  
-                  // Filter measures by organization
-                  const filteredMeasures = allMeasures.filter(measure => {
-                    if (!measure) return false;
-                    // In production, be more permissive
-                    return !measure.organization || !currentUserOrgId || measure.organization === currentUserOrgId;
-                  });
-
-                  // Fetch main activities with multiple fallback strategies
-                  let activitiesResponse = { data: [] };
-                  try {
-                    // Strategy 1: Direct API call with timeout
-                    activitiesResponse = await Promise.race([
-                      mainActivities.getByInitiative(initiative.id),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-                    ]);
-                  } catch (activitiesError) {
-                    console.warn(`PlanReviewTable: Strategy 1 failed for activities initiative ${initiative.id}:`, activitiesError);
-                    
-                    // Strategy 2: Try with different parameter format
-                    try {
-                      const response = await Promise.race([
-                        api.get(`/main-activities/`, { params: { initiative: initiative.id } }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-                      ]);
-                      activitiesResponse = { data: response.data?.results || response.data || [] };
-                    } catch (fallbackError) {
-                      console.warn(`PlanReviewTable: Strategy 2 failed for activities initiative ${initiative.id}:`, fallbackError);
-                      
-                      // Strategy 3: Try direct endpoint
-                      try {
-                        const directResponse = await Promise.race([
-                          api.get(`/main-activities/?initiative_id=${initiative.id}`),
-                          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
-                        ]);
-                        activitiesResponse = { data: directResponse.data?.results || directResponse.data || [] };
-                      } catch (directError) {
-                        console.warn(`PlanReviewTable: All strategies failed for activities initiative ${initiative.id}, using empty data`);
-                        activitiesResponse = { data: [] };
-                      }
-                    }
-                  }
-                  
-                  const allActivities = activitiesResponse?.data || [];
-                  console.log(`PlanReviewTable: Found ${allActivities.length} activities for initiative ${initiative.id}`);
-                  
-                  // Filter activities by organization
-                  const filteredActivities = allActivities.filter(activity => {
-                    if (!activity) return false;
-                    // In production, be more permissive
-                    return !activity.organization || !currentUserOrgId || activity.organization === currentUserOrgId;
-                  });
-
-                  console.log(`PlanReviewTable: Initiative ${initiative.id} final data: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
-
-                  return {
-                    ...initiative,
-                    performance_measures: filteredMeasures,
-                    main_activities: filteredActivities
-                  };
-                } catch (error) {
-                  console.warn(`PlanReviewTable: Error processing initiative ${initiative.id}:`, error);
-                  // In production, always return the initiative with empty data rather than failing
-                  return {
-                    ...initiative,
-                    performance_measures: [],
-                    main_activities: []
-                  };
-                }
-              })
-            );
-
-            // Set effective weight correctly
-            const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
-              ? objective.planner_weight
-              : objective.weight;
-
-            console.log(`PlanReviewTable: Objective ${objective.id} (${objective.title}) FINAL RESULT: ${enrichedInitiatives.length} initiatives with complete data`);
-            
-            // Log each initiative for debugging
-            enrichedInitiatives.forEach((init, index) => {
-              console.log(`PlanReviewTable:   Initiative ${index + 1}: ${init.name} (ID: ${init.id}) - Measures: ${init.performance_measures?.length || 0}, Activities: ${init.main_activities?.length || 0}`);
-            });
-
-            return {
-              ...objective,
-              effective_weight: effectiveWeight,
-              initiatives: enrichedInitiatives
-            };
-          } catch (error) {
-            console.warn(`Error processing objective ${objective.id}:`, error);
-            return {
-              ...objective,
-              effective_weight: objective.weight,
-              initiatives: []
-            };
+        // Process each initiative to get its measures and activities
+        const enrichedInitiatives = [];
+        
+        for (const initiative of filteredInitiatives) {
+          if (!initiative || !initiative.id) {
+            console.warn(`PlanReviewTable: Skipping invalid initiative for objective ${objective.id}`);
+            continue;
           }
-        })
-      );
 
-      console.log('PlanReviewTable: === FINAL SUMMARY ===');
-      console.log('PlanReviewTable: Successfully enriched objectives with complete data:', 
-        enrichedObjectives.map(obj => ({
-          id: obj.id,
-          title: obj.title,
-          initiativesCount: obj.initiatives?.length || 0,
-          totalMeasures: obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0,
-          totalActivities: obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0
-        }))
-      );
-      
-      const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
-      console.log(`PlanReviewTable: GRAND TOTAL: ${totalInitiatives} initiatives across ${enrichedObjectives.length} objectives`);
-      
-      return enrichedObjectives;
-    } catch (error) {
-      console.error('PlanReviewTable: Error in fetchCompleteObjectiveData:', error);
-      throw error;
+          console.log(`PlanReviewTable: Processing initiative ${initiative.id} (${initiative.name})`);
+
+          try {
+            // Fetch performance measures and main activities
+            const [performanceMeasuresData, mainActivitiesData] = await Promise.all([
+              fetchPerformanceMeasuresForInitiative(initiative.id),
+              fetchMainActivitiesForInitiative(initiative.id)
+            ]);
+
+            // Filter by organization if needed
+            const filteredMeasures = Array.isArray(performanceMeasuresData) ?
+              performanceMeasuresData.filter(measure => {
+                if (!measure) return false;
+                return !measure.organization || !currentUserOrgId || measure.organization === currentUserOrgId;
+              }) : [];
+
+            const filteredActivities = Array.isArray(mainActivitiesData) ?
+              mainActivitiesData.filter(activity => {
+                if (!activity) return false;
+                return !activity.organization || !currentUserOrgId || activity.organization === currentUserOrgId;
+              }) : [];
+
+            console.log(`PlanReviewTable: Initiative ${initiative.id} final data: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: filteredMeasures,
+              main_activities: filteredActivities
+            });
+
+          } catch (error) {
+            console.warn(`PlanReviewTable: Skipping initiative ${initiative.id} due to error:`, error);
+            // Add initiative without measures/activities rather than failing completely
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: [],
+              main_activities: []
+            });
+          }
+        }
+
+        // Calculate effective weight
+        const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+          ? objective.planner_weight
+          : objective.weight;
+
+        console.log(`PlanReviewTable: Objective ${objective.id} final result: ${enrichedInitiatives.length} initiatives`);
+
+        processedObjectives.push({
+          ...objective,
+          effective_weight: effectiveWeight,
+          initiatives: enrichedInitiatives
+        });
+
+      } catch (error) {
+        console.warn(`PlanReviewTable: Skipping objective ${objective.id} due to error:`, error);
+        // Add objective without initiatives rather than failing completely
+        processedObjectives.push({
+          ...objective,
+          effective_weight: objective.weight,
+          initiatives: []
+        });
+      }
     }
+
+    console.log(`PlanReviewTable: Final result: ${processedObjectives.length} objectives processed`);
+    return processedObjectives;
   };
 
   // Process objectives data when component mounts or data changes
@@ -571,7 +603,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
       setError(null);
       
       try {
-        const processed = await processObjectivesData(objectives);
+        const processed = await fetchCompleteObjectiveData(objectives);
         setProcessedObjectives(processed);
       } catch (error) {
         console.error('❌ Error processing objectives data:', error);
