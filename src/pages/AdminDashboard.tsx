@@ -111,15 +111,23 @@ const AdminDashboard: React.FC = () => {
 
   // Function to fetch complete budget data for plans
   const fetchCompleteBudgetData = async (plans: any[]) => {
-    if (!plans || plans.length === 0) return;
+    // Filter to only include SUBMITTED or APPROVED plans for budget calculations
+    const eligiblePlans = plans.filter(plan => 
+      plan.status === 'SUBMITTED' || plan.status === 'APPROVED'
+    );
+    
+    if (!eligiblePlans || eligiblePlans.length === 0) {
+      console.log('No eligible plans (SUBMITTED/APPROVED) found for budget calculation');
+      return;
+    }
     
     setIsLoadingBudgets(true);
     setBudgetError(null);
     
     try {
-      console.log('Fetching complete budget data for plans...');
+      console.log(`Fetching complete budget data for ${eligiblePlans.length} eligible plans (SUBMITTED/APPROVED)...`);
       
-      for (const plan of plans) {
+      for (const plan of eligiblePlans) {
         try {
           // Fetch objectives for this plan's organization
           const objectivesResponse = await api.get('/strategic-objectives/', {
