@@ -112,21 +112,25 @@ const PlanSummary: React.FC = () => {
       
       // Get ALL additional selected objectives if they exist
       if (planData?.selected_objectives && Array.isArray(planData.selected_objectives)) {
-        const additionalIds = planData.selected_objectives.map((obj: any) => 
-          typeof obj === 'object' ? obj.id?.toString() : obj.toString()
-        );
+        const additionalIds = planData.selected_objectives
+          .filter((obj: any) => obj && (obj.id || obj)) // Filter out null/undefined
+          .map((obj: any) => typeof obj === 'object' ? obj.id?.toString() : obj.toString())
+          .filter(Boolean); // Remove empty strings
         selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
       } else if (planData?.selected_objectives && typeof planData.selected_objectives === 'object') {
         // Handle case where selected_objectives is a single object
-        const objId = planData.selected_objectives.id?.toString() || planData.selected_objectives.toString();
-        selectedObjectiveIds.push(objId);
+        if (planData.selected_objectives.id || planData.selected_objectives) {
+          const objId = planData.selected_objectives.id?.toString() || planData.selected_objectives.toString();
+          if (objId) selectedObjectiveIds.push(objId);
+        }
       }
       
       // Also check if there are selected objectives in the plan data directly
       if (planData?.objectives && Array.isArray(planData.objectives)) {
-        const directObjectiveIds = planData.objectives.map((obj: any) => 
-          typeof obj === 'object' ? obj.id?.toString() : obj.toString()
-        );
+        const directObjectiveIds = planData.objectives
+          .filter((obj: any) => obj && (obj.id || obj)) // Filter out null/undefined
+          .map((obj: any) => typeof obj === 'object' ? obj.id?.toString() : obj.toString())
+          .filter(Boolean); // Remove empty strings
         selectedObjectiveIds = [...selectedObjectiveIds, ...directObjectiveIds];
       }
       
@@ -136,13 +140,23 @@ const PlanSummary: React.FC = () => {
       console.log('ALL selected objective IDs for this plan:', selectedObjectiveIds);
       
       if (selectedObjectiveIds.length === 0) {
-        console.warn('No selected objectives found for this plan');
-        console.warn('Plan data structure:', {
+        console.error('❌ No selected objectives found for this plan');
+        console.error('📋 Plan data structure for debugging:', {
           strategic_objective: planData?.strategic_objective,
           selected_objectives: planData?.selected_objectives,
-          objectives: planData?.objectives
+          objectives: planData?.objectives,
+          planId: planId,
+          organizationId: organizationId
         });
-        return [];
+        
+        // Fallback: if no selected objectives found, try to use the main strategic_objective
+        if (planData?.strategic_objective) {
+          console.warn('🔄 Fallback: Using main strategic_objective as selected');
+          selectedObjectiveIds = [planData.strategic_objective.toString()];
+        } else {
+          console.error('❌ No fallback available, returning empty array');
+          return [];
+        }
       }
       
       // Step 2: Fetch only the selected objectives
@@ -159,7 +173,8 @@ const PlanSummary: React.FC = () => {
       
       if (selectedObjectives.length === 0) {
         console.error('No matching objectives found in system for selected IDs:', selectedObjectiveIds);
-        console.error('Available objective IDs in system:', allObjectives.map(obj => obj.id));
+        console.error('📋 Available objective IDs in system:', allObjectives.map(obj => obj.id));
+        console.error('📋 Selected IDs we were looking for:', selectedObjectiveIds);
         return [];
       }
       
@@ -198,16 +213,18 @@ const PlanSummary: React.FC = () => {
       const enrichedObjectives = [];
       
       for (const objective of selectedObjectives) {
+        console.log(`📋 Processing selected objective: ${objective.id} (${objective.title})`);
+        
         const objectiveInitiatives = objectiveInitiativesMap[objective.id] || [];
         
-        console.log(`Processing objective ${objective.id} (${objective.title}) with ${objectiveInitiatives.length} initiatives`);
+        console.log(`  ├── Found ${objectiveInitiatives.length} initiatives for this objective`);
         
         // Process initiatives for this objective
         const enrichedInitiatives = [];
         
         for (const initiative of objectiveInitiatives) {
           try {
-            console.log(`  Fetching data for initiative ${initiative.id} (${initiative.name})`);
+            console.log(`    ├── Processing initiative: ${initiative.id} (${initiative.name})`);
             
             // Fetch performance measures
             const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
@@ -223,7 +240,7 @@ const PlanSummary: React.FC = () => {
               !activity.organization || activity.organization === organizationId
             );
 
-            console.log(`  Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+            console.log(`      ├── ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
             enrichedInitiatives.push({
               ...initiative,
@@ -234,7 +251,7 @@ const PlanSummary: React.FC = () => {
             // Small delay to prevent server overload
             await new Promise(resolve => setTimeout(resolve, 100));
           } catch (error) {
-            console.error(`Error fetching data for initiative ${initiative.id}:`, error);
+            console.error(`    ❌ Error fetching data for initiative ${initiative.id}:`, error);
             // Add initiative with empty data instead of skipping
             enrichedInitiatives.push({
               ...initiative,
@@ -255,19 +272,19 @@ const PlanSummary: React.FC = () => {
           initiatives: enrichedInitiatives
         });
         
-        console.log(`Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+        console.log(`  ✅ Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
         
         // Small delay between objectives
         await new Promise(resolve => setTimeout(resolve, 200));
       }
       
-      console.log(`=== FINAL RESULT: ${enrichedObjectives.length} objectives processed ===`);
+      console.log(`=== ✅ FINAL RESULT: ${enrichedObjectives.length} SELECTED objectives processed ===`);
       const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
-      console.log(`Total initiatives across selected objectives: ${totalInitiatives}`);
+      console.log(`📊 Total initiatives across SELECTED objectives: ${totalInitiatives}`);
       
       return enrichedObjectives;
     } catch (error) {
-      console.error('Error in fetchSelectedObjectives:', error);
+      console.error('❌ Error in fetchSelectedObjectives:', error);
       throw error;
     } finally {
       setIsLoadingComplete(false);

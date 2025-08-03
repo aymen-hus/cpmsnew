@@ -72,29 +72,58 @@ const AdminDashboard: React.FC = () => {
   }, []);
 
   // Fetch all plans for admin analytics
-  const { data: allPlansData, isLoading: isLoadingPlans, refetch: refetchPlans } = useQuery({
+  const { data: allPlansData, isLoading: isLoadingPlans, refetch: refetchPlans, error: plansError } = useQuery({
     queryKey: ['admin-plans', 'all'],
     queryFn: async () => {
       try {
         console.log('Fetching all plans for admin analytics...');
         
-        // Admin can see ALL plans from ALL organizations
-        const response = await api.get('/plans/', {
-          timeout: 15000,
-          headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-        });
+        // Production-safe API call with retry logic
+        let response;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+          try {
+            console.log(`Fetching plans attempt ${retryCount + 1}/${maxRetries}`);
+            response = await api.get('/plans/', {
+              timeout: Math.min(30000, 10000 + (retryCount * 10000)), // Increase timeout on retries
+              headers: { 
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Accept': 'application/json'
+              }
+            });
+            console.log('Successfully fetched plans on attempt', retryCount + 1);
+            break;
+          } catch (attemptError) {
+            retryCount++;
+            console.warn(`Plans fetch attempt ${retryCount} failed:`, attemptError);
+            
+            if (retryCount >= maxRetries) {
+              throw attemptError;
+            }
+            
+            // Wait before retry with exponential backoff
+            const waitTime = Math.min(5000, 1000 * Math.pow(2, retryCount - 1));
+            console.log(`Waiting ${waitTime}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          }
+        }
         
         const plans = response.data?.results || response.data || [];
         console.log('All plans data for admin:', plans.length);
         
-        // Map organization names
-        if (Array.isArray(plans)) {
-          plans.forEach((plan: any) => {
-            if (plan.organization && organizationsMap[plan.organization]) {
-              plan.organizationName = organizationsMap[plan.organization];
-            }
-          });
+        if (!Array.isArray(plans)) {
+          console.error('Expected array but got:', typeof plans);
+          return [];
         }
+        
+        // Map organization names
+        plans.forEach((plan: any) => {
+          if (plan.organization && organizationsMap[plan.organization]) {
+            plan.organizationName = organizationsMap[plan.organization];
+          }
+        });
         
         // Fetch complete budget data for each plan
         await fetchCompleteBudgetData(plans);
@@ -106,7 +135,10 @@ const AdminDashboard: React.FC = () => {
       }
     },
     enabled: Object.keys(organizationsMap).length > 0,
-    refetchInterval: 60000 // Refresh every minute
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    refetchInterval: 300000, // Refresh every 5 minutes instead of 1 minute
+    staleTime: 60000 // Consider data stale after 1 minute
   });
 
   // Function to fetch complete budget data for plans
@@ -127,17 +159,35 @@ const AdminDashboard: React.FC = () => {
     try {
       console.log(`Fetching complete budget data for ${eligiblePlans.length} eligible plans (SUBMITTED/APPROVED)...`);
       
-      for (const plan of eligiblePlans) {
+      // Process plans in smaller batches to avoid overwhelming the server
+      const batchSize = 5; // Process 5 plans at a time
+      const batches = [];
+      for (let i = 0; i < eligiblePlans.length; i += batchSize) {
+        batches.push(eligiblePlans.slice(i, i + batchSize));
+      }
+      
+      console.log(`Processing ${eligiblePlans.length} plans in ${batches.length} batches of ${batchSize}`);
+      
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} plans`);
+        
+        // Process each plan in the current batch
+        await Promise.all(batch.map(async (plan, planIndex) => {
         try {
-          // Fetch objectives for this plan's organization
+          console.log(`Processing plan ${plan.id} (${batchIndex * batchSize + planIndex + 1}/${eligiblePlans.length})`);
+          
+          // Fetch objectives for this plan's organization with production timeout
           const objectivesResponse = await api.get('/strategic-objectives/', {
-            timeout: 10000
+            timeout: 20000,
+            headers: { 'Accept': 'application/json' }
           });
           const allObjectives = objectivesResponse?.data || [];
           
           // Fetch initiatives for this organization
           const initiativesResponse = await api.get('/strategic-initiatives/', {
-            timeout: 10000
+            timeout: 20000,
+            headers: { 'Accept': 'application/json' }
           });
           const allInitiatives = initiativesResponse?.data || [];
           
@@ -158,7 +208,8 @@ const AdminDashboard: React.FC = () => {
           for (const initiative of orgInitiatives) {
             try {
               const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`, {
-                timeout: 8000
+                timeout: 15000,
+                headers: { 'Accept': 'application/json' }
               });
               const activities = activitiesResponse?.data?.results || activitiesResponse?.data || [];
               
@@ -183,7 +234,7 @@ const AdminDashboard: React.FC = () => {
               }
               
               // Small delay to prevent server overload
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise(resolve => setTimeout(resolve, 200));
             } catch (activityError) {
               console.warn(`Error fetching activities for initiative ${initiative.id}:`, activityError);
             }
@@ -205,13 +256,20 @@ const AdminDashboard: React.FC = () => {
           });
           
           // Small delay between plans
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 300));
         } catch (planError) {
           console.warn(`Error fetching budget for plan ${plan.id}:`, planError);
           // Set default values if budget fetch fails
           plan.budget_total = 0;
           plan.funded_total = 0;
           plan.funding_gap = 0;
+        }
+        }));
+        
+        // Delay between batches to avoid overwhelming the server
+        if (batchIndex < batches.length - 1) {
+          console.log(`Waiting before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
       
@@ -229,11 +287,14 @@ const AdminDashboard: React.FC = () => {
     setIsRefreshing(true);
     setError(null);
     try {
+      console.log('Manual refresh initiated');
       await refetchPlans();
       setSuccess('Data refreshed successfully');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
+      console.error('Manual refresh failed:', err);
       setError('Failed to refresh data');
+      setTimeout(() => setError(null), 5000);
     } finally {
       setIsRefreshing(false);
     }
@@ -271,7 +332,7 @@ const AdminDashboard: React.FC = () => {
     };
 
     // Organization-wise statistics
-    const orgBudgetMapWithEligible: Record<string, { total: number, funded: number, gap: number, planCount: number, eligibleCount: number }> = {};
+    const orgBudgetMap: Record<string, { total: number, funded: number, gap: number, planCount: number, eligibleCount: number }> = {};
 
     allPlansData.forEach(plan => {
       // Count by status
@@ -293,16 +354,16 @@ const AdminDashboard: React.FC = () => {
         organizationsMap[plan.organization] || 
         `Organization ${plan.organization}`;
 
-      if (!orgBudgetMapWithEligible[orgName]) {
-        orgBudgetMapWithEligible[orgName] = { total: 0, funded: 0, gap: 0, planCount: 0, eligibleCount: 0 };
+      if (!orgBudgetMap[orgName]) {
+        orgBudgetMap[orgName] = { total: 0, funded: 0, gap: 0, planCount: 0, eligibleCount: 0 };
       }
       
-      orgBudgetMapWithEligible[orgName].planCount++;
+      orgBudgetMap[orgName].planCount++;
 
       // Only include budget data for SUBMITTED or APPROVED plans
       if (plan.status === 'SUBMITTED' || plan.status === 'APPROVED') {
         stats.eligiblePlansForBudget++;
-        orgBudgetMapWithEligible[orgName].eligibleCount++;
+        orgBudgetMap[orgName].eligibleCount++;
         
         // Use the calculated budget data from fetchCompleteBudgetData
         const planTotalBudget = Number(plan.budget_total || 0);
@@ -313,13 +374,13 @@ const AdminDashboard: React.FC = () => {
         stats.fundedBudget += planFundedBudget;
         stats.fundingGap += planFundingGap;
 
-        orgBudgetMapWithEligible[orgName].total += planTotalBudget;
-        orgBudgetMapWithEligible[orgName].funded += planFundedBudget;
-        orgBudgetMapWithEligible[orgName].gap += planFundingGap;
+        orgBudgetMap[orgName].total += planTotalBudget;
+        orgBudgetMap[orgName].funded += planFundedBudget;
+        orgBudgetMap[orgName].gap += planFundingGap;
       }
     });
 
-    stats.orgStats = orgBudgetMapWithEligible;
+    stats.orgStats = orgBudgetMap;
     return stats;
   };
 
@@ -408,6 +469,7 @@ const AdminDashboard: React.FC = () => {
           {isLoadingBudgets && (
             <p className="text-sm text-gray-500 mt-2">Calculating budget data...</p>
           )}
+          <p className="text-xs text-gray-400 mt-1">This may take longer in production</p>
         </div>
       </div>
     );
@@ -431,6 +493,28 @@ const AdminDashboard: React.FC = () => {
         <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center text-green-700">
           <CheckCircle className="h-5 w-5 mr-2" />
           {success}
+        </div>
+      )}
+
+      {/* Production Error Handling */}
+      {plansError && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center text-red-700">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <div>
+              <h3 className="font-medium">Failed to load plans data</h3>
+              <p className="text-sm mt-1">
+                {plansError instanceof Error ? plansError.message : 'Network timeout occurred'}
+              </p>
+              <button
+                onClick={() => refetchPlans()}
+                disabled={isLoadingPlans}
+                className="mt-2 px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 disabled:opacity-50"
+              >
+                {isLoadingPlans ? 'Retrying...' : 'Retry Loading'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -630,11 +714,32 @@ const AdminDashboard: React.FC = () => {
             <div className="p-4 sm:p-6">
               <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">All Plans Overview</h3>
 
-              {!allPlansData || allPlansData.length === 0 ? (
+              {plansError ? (
+                <div className="text-center py-12 bg-red-50 rounded-lg border-2 border-dashed border-red-200">
+                  <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-red-800 mb-1">Failed to load plans</h3>
+                  <p className="text-red-600">Network timeout or server error occurred.</p>
+                  <button
+                    onClick={() => refetchPlans()}
+                    disabled={isLoadingPlans}
+                    className="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                  >
+                    {isLoadingPlans ? 'Retrying...' : 'Retry Loading Plans'}
+                  </button>
+                </div>
+              ) : (!allPlansData || allPlansData.length === 0) ? (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
                   <LayoutGrid className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-1">No plans found</h3>
                   <p className="text-gray-500">No plans have been created yet across all organizations.</p>
+                  {!isLoadingBudgets && (
+                    <button
+                      onClick={() => refetchPlans()}
+                      className="mt-4 px-4 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                    >
+                      Check Again
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-hidden overflow-x-auto border border-gray-200 rounded-lg">
@@ -723,8 +828,23 @@ const AdminDashboard: React.FC = () => {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-medium text-gray-900 mb-6">Budget Analysis by Organization</h3>
 
-            <div className="h-80">
-              {Object.keys(stats.orgStats).length > 0 && !isLoadingBudgets ? (
+            {plansError ? (
+              <div className="h-80 flex items-center justify-center">
+                <div className="text-center">
+                  <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-4" />
+                  <p className="text-red-600">Unable to load budget data due to network issues</p>
+                  <button
+                    onClick={() => refetchPlans()}
+                    disabled={isLoadingPlans}
+                    className="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                  >
+                    {isLoadingPlans ? 'Retrying...' : 'Retry'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="h-80">
+                {Object.keys(stats.orgStats).length > 0 && !isLoadingBudgets ? (
                 <Bar 
                   data={orgBudgetChartData}
                   options={{
@@ -770,19 +890,27 @@ const AdminDashboard: React.FC = () => {
                     }
                   }}
                 />
-              ) : isLoadingBudgets ? (
+                ) : isLoadingBudgets ? (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
                     <Loader className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
                     <p className="text-gray-500">Loading budget analysis...</p>
+                    <p className="text-xs text-gray-400 mt-1">Processing {stats.eligiblePlansForBudget} eligible plans</p>
                   </div>
                 </div>
-              ) : (
+                ) : (
                 <div className="h-full flex items-center justify-center">
                   <p className="text-gray-500">No budget data available</p>
+                  <button
+                    onClick={() => refetchPlans()}
+                    className="ml-4 px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200"
+                  >
+                    Reload Data
+                  </button>
                 </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -792,14 +920,33 @@ const AdminDashboard: React.FC = () => {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-6">Organization Performance</h3>
 
-          {isLoadingBudgets ? (
+          {plansError ? (
+            <div className="text-center py-8">
+              <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-4" />
+              <p className="text-red-600">Unable to load organization data due to network issues</p>
+              <button
+                onClick={() => refetchPlans()}
+                disabled={isLoadingPlans}
+                className="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+              >
+                {isLoadingPlans ? 'Retrying...' : 'Retry'}
+              </button>
+            </div>
+          ) : isLoadingBudgets ? (
             <div className="text-center py-8">
               <Loader className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
               <p className="text-gray-500">Loading organization budget data...</p>
+              <p className="text-xs text-gray-400 mt-1">Processing budget calculations...</p>
             </div>
           ) : Object.keys(stats.orgStats).length === 0 ? (
             <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
               <p className="text-gray-500">No organization data available</p>
+              <button
+                onClick={() => refetchPlans()}
+                className="mt-4 px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              >
+                Reload Organization Data
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -809,7 +956,9 @@ const AdminDashboard: React.FC = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Plans:</span>
-                    <span className="text-sm font-medium">{orgData.planCount}</span>
+                    <span className="text-sm font-medium">
+                      {orgData.planCount} ({orgData.eligibleCount} eligible)
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Total Budget:</span>
