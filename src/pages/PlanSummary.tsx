@@ -16,7 +16,8 @@ import {
   Calendar,
   Target,
   Activity,
-  DollarSign
+  DollarSign,
+  RefreshCw
 } from 'lucide-react';
 import { format } from 'date-fns';
 import PlanReviewForm from '../components/PlanReviewForm';
@@ -253,25 +254,6 @@ const PlanSummary: React.FC = () => {
     }
   });
 
-  // Get the selected objectives from plan data - same logic as PlanReviewTable
-  const getSelectedObjectivesFromPlan = () => {
-    if (!planData) return [];
-    
-    const selectedObjectives = [];
-    
-    // Add main strategic objective
-    if (planData.strategic_objective_data) {
-      selectedObjectives.push(planData.strategic_objective_data);
-    }
-    
-    // Add additional selected objectives
-    if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
-      selectedObjectives.push(...planData.selected_objectives);
-    }
-    
-    return selectedObjectives;
-  };
-
   // Handle showing complete table - same as planner preview
   const handleShowCompleteTable = async () => {
     if (!planData) {
@@ -455,7 +437,6 @@ const PlanSummary: React.FC = () => {
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-3">
             <button
-                setIsLoadingComplete(false);
               onClick={handleShowCompleteTable}
               className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
