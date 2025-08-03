@@ -36,6 +36,7 @@ const PlanSummary: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isUserEvaluator, setIsUserEvaluator] = useState(false);
+  const [isUserAdmin, setIsUserAdmin] = useState(false);
   const [userOrgIds, setUserOrgIds] = useState<number[]>([]);
   const [allObjectivesWithData, setAllObjectivesWithData] = useState<any[]>([]);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -59,6 +60,7 @@ const PlanSummary: React.FC = () => {
         }
         
         setIsUserEvaluator(isEvaluator(authData.userOrganizations));
+        setIsUserAdmin(isAdmin(authData.userOrganizations));
         
         // Get user's organization IDs
         if (authData.userOrganizations && authData.userOrganizations.length > 0) {
@@ -200,10 +202,13 @@ const PlanSummary: React.FC = () => {
 
             console.log(`📋 Found ${initiatives.length} initiatives for objective ${objectiveId}`);
 
-            // ADMIN FIX: Don't filter initiatives - show ALL data for admin
-            const filteredInitiatives = initiatives;
+            // For admin users, show ALL initiatives regardless of organization
+            // For regular users, filter by organization
+            const filteredInitiatives = isUserAdmin ? initiatives : initiatives.filter(initiative => 
+              initiative.is_default || !initiative.organization || userOrgIds.includes(initiative.organization)
+            );
 
-            console.log(`✓ Using ${filteredInitiatives.length} initiatives (admin view - no filtering)`);
+            console.log(`✓ Using ${filteredInitiatives.length} initiatives (${isUserAdmin ? 'admin - no filtering' : 'filtered by org'})`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = [];
@@ -216,15 +221,19 @@ const PlanSummary: React.FC = () => {
                 const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
                 const measures = measuresResponse.data?.results || measuresResponse.data || [];
 
-                // ADMIN FIX: Don't filter measures - show ALL data for admin
-                const filteredMeasures = measures;
+                // For admin users, show ALL measures regardless of organization
+                const filteredMeasures = isUserAdmin ? measures : measures.filter(measure =>
+                  !measure.organization || userOrgIds.includes(measure.organization)
+                );
 
                 // Fetch main activities
                 const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
                 const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
 
-                // ADMIN FIX: Don't filter activities - show ALL data for admin
-                const filteredActivities = activities;
+                // For admin users, show ALL activities regardless of organization
+                const filteredActivities = isUserAdmin ? activities : activities.filter(activity =>
+                  !activity.organization || userOrgIds.includes(activity.organization)
+                );
 
                 console.log(`✓ Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
@@ -289,11 +298,11 @@ const PlanSummary: React.FC = () => {
       }
     };
 
-    // ADMIN FIX: Fetch when we have plan data (don't require user org IDs for admin)
-    if (planData) {
+    // Fetch when we have plan data - admins don't need org IDs, regular users do
+    if (planData && (isUserAdmin || userOrgIds.length > 0)) {
       fetchAllPlanObjectives();
     }
-  }, [planData]);
+  }, [planData, isUserAdmin, userOrgIds]);
 
   // Handle showing complete table
   const handleShowCompleteTable = async () => {
@@ -632,7 +641,7 @@ const PlanSummary: React.FC = () => {
                     toDate={planData.to_date || ''}
                     planType={planData.type || 'Unknown Type'}
                     isPreviewMode={true}
-                    userOrgId={Number(planData.organization)}
+                    userOrgId={isUserAdmin ? null : Number(planData.organization)}
                     isViewOnly={true}
                   />
                 </div>
