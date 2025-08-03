@@ -707,15 +707,53 @@ const AdminDashboard: React.FC = () => {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-          // Enrich plans with organization names only - budget calculated separately
                     Created
-          const enrichedPlans = plans.map((plan: any) => ({
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {allPlansData.slice(0, 10).map((plan: any) => (
+                  <tr key={plan.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {plan.organizationName}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {plan.planner_name || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {plan.plan_type || 'Strategic Plan'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        plan.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
+                        plan.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
+                        plan.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {plan.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatDateSafe(plan.created_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="px-6 py-8 text-center text-gray-500">
+            No plans found
+          </div>
+        )}
+      </div>
+
+      {/* System Summary */}
+      <div className="bg-white shadow rounded-lg overflow-hidden mt-8">
+        <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-medium text-gray-900 flex items-center">
-            ...plan,
             <TrendingUp className="h-5 w-5 mr-2 text-gray-600" />
-            organizationName: organizationsMap[plan.organization] || `Organization ${plan.organization}`
             System Summary
-          }));
           </h3>
         </div>
         <div className="px-6 py-4">
@@ -725,7 +763,6 @@ const AdminDashboard: React.FC = () => {
               <div className="text-sm text-gray-500">Total Plans Created</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">${stats.totalBudget.toLocaleString()}</div>
               <div className="text-2xl font-bold text-green-600">${stats.systemTotalBudget.toLocaleString()}</div>
               <div className="text-sm text-gray-500">Total System Budget</div>
             </div>
