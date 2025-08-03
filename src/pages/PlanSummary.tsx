@@ -200,14 +200,10 @@ const PlanSummary: React.FC = () => {
 
             console.log(`📋 Found ${initiatives.length} initiatives for objective ${objectiveId}`);
 
-            // Filter initiatives based on user organization
-            const filteredInitiatives = initiatives.filter(initiative => 
-              initiative.is_default || 
-              !initiative.organization || 
-              userOrgIds.includes(Number(initiative.organization))
-            );
+            // ADMIN FIX: Don't filter initiatives - show ALL data for admin
+            const filteredInitiatives = initiatives;
 
-            console.log(`✓ Filtered to ${filteredInitiatives.length} initiatives for user orgs`);
+            console.log(`✓ Using ${filteredInitiatives.length} initiatives (admin view - no filtering)`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = [];
@@ -220,19 +216,15 @@ const PlanSummary: React.FC = () => {
                 const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
                 const measures = measuresResponse.data?.results || measuresResponse.data || [];
 
-                // Filter measures by organization
-                const filteredMeasures = measures.filter(measure =>
-                  !measure.organization || userOrgIds.includes(Number(measure.organization))
-                );
+                // ADMIN FIX: Don't filter measures - show ALL data for admin
+                const filteredMeasures = measures;
 
                 // Fetch main activities
                 const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
                 const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
 
-                // Filter activities by organization
-                const filteredActivities = activities.filter(activity =>
-                  !activity.organization || userOrgIds.includes(Number(activity.organization))
-                );
+                // ADMIN FIX: Don't filter activities - show ALL data for admin
+                const filteredActivities = activities;
 
                 console.log(`✓ Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
@@ -297,11 +289,11 @@ const PlanSummary: React.FC = () => {
       }
     };
 
-    // Only fetch when we have plan data and user org IDs
-    if (planData && userOrgIds.length > 0) {
+    // ADMIN FIX: Fetch when we have plan data (don't require user org IDs for admin)
+    if (planData) {
       fetchAllPlanObjectives();
     }
-  }, [planData, userOrgIds]);
+  }, [planData]);
 
   // Handle showing complete table
   const handleShowCompleteTable = async () => {

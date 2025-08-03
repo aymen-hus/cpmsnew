@@ -43,7 +43,7 @@ const AdminDashboard: React.FC = () => {
     approvedPlans: 0,
     rejectedPlans: 0,
     totalBudget: 0,
-    fundedBudget: 0,
+    availableFunding: 0,
     fundingGap: 0,
     organizationStats: {} as Record<string, any>,
     monthlySubmissions: {} as Record<string, number>
@@ -119,11 +119,68 @@ const AdminDashboard: React.FC = () => {
           return [];
         }
 
-        // Add organization names to plans
-        const enrichedPlans = plans.map((plan: any) => ({
-          ...plan,
-          organizationName: organizationsMap[plan.organization] || `Organization ${plan.organization}`
-        }));
+        // For each plan, fetch budget data if it's submitted or approved
+        const enrichedPlans = await Promise.all(
+          plans.map(async (plan: any) => {
+            let budgetData = {
+              totalBudget: 0,
+              availableFunding: 0,
+              fundingGap: 0
+            };
+
+            // Only fetch budget data for submitted/approved plans
+            if (plan.status === 'SUBMITTED' || plan.status === 'APPROVED') {
+              try {
+                // Get plan objectives and calculate budget
+                const planResponse = await api.get(`/strategic-objectives/${plan.strategic_objective}/`);
+                const objective = planResponse.data;
+                
+                if (objective) {
+                  // Get initiatives for this objective
+                  const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${plan.strategic_objective}`);
+                  const initiatives = initiativesResponse.data?.results || initiativesResponse.data || [];
+                  
+                  // For each initiative, get activities and their budgets
+                  for (const initiative of initiatives) {
+                    try {
+                      const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
+                      const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
+                      
+                      // Sum up budget from activities
+                      activities.forEach((activity: any) => {
+                        if (activity.budget) {
+                          const budget = activity.budget;
+                          const estimatedCost = budget.budget_calculation_type === 'WITH_TOOL' 
+                            ? Number(budget.estimated_cost_with_tool || 0)
+                            : Number(budget.estimated_cost_without_tool || 0);
+                          
+                          const availableFunding = Number(budget.government_treasury || 0) +
+                                                 Number(budget.sdg_funding || 0) +
+                                                 Number(budget.partners_funding || 0) +
+                                                 Number(budget.other_funding || 0);
+                          
+                          budgetData.totalBudget += estimatedCost;
+                          budgetData.availableFunding += availableFunding;
+                          budgetData.fundingGap += Math.max(0, estimatedCost - availableFunding);
+                        }
+                      });
+                    } catch (activityError) {
+                      console.warn(`Failed to fetch activities for initiative ${initiative.id}:`, activityError);
+                    }
+                  }
+                }
+              } catch (budgetError) {
+                console.warn(`Failed to fetch budget data for plan ${plan.id}:`, budgetError);
+              }
+            }
+            // Add organization names and budget data to plans
+            return {
+              ...plan,
+              organizationName: organizationsMap[plan.organization] || `Organization ${plan.organization}`,
+              budgetData
+            };
+          })
+        );
 
         console.log(`✅ Admin dashboard: Processed ${enrichedPlans.length} plans`);
         return enrichedPlans;
@@ -153,14 +210,22 @@ const AdminDashboard: React.FC = () => {
       approvedPlans: 0,
       rejectedPlans: 0,
       totalBudget: 0,
-      fundedBudget: 0,
+      availableFunding: 0,
       fundingGap: 0,
       organizationStats: {} as Record<string, any>,
       monthlySubmissions: {} as Record<string, number>
     };
 
     // Organization statistics
-    const orgStats: Record<string, { planCount: number, approved: number, rejected: number, pending: number }> = {};
+    const orgStats: Record<string, { 
+      planCount: number, 
+      approved: number, 
+      rejected: number, 
+      pending: number,
+      totalBudget: number,
+      availableFunding: number,
+      fundingGap: number
+    }> = {};
 
     plansData.forEach((plan: any) => {
       // Count by status
@@ -179,6 +244,12 @@ const AdminDashboard: React.FC = () => {
           break;
       }
 
+      // Add budget data to totals
+      if (plan.budgetData) {
+        newStats.totalBudget += plan.budgetData.totalBudget;
+        newStats.availableFunding += plan.budgetData.availableFunding;
+        newStats.fundingGap += plan.budgetData.fundingGap;
+      }
       // Monthly submission trends
       if (plan.submitted_at) {
         try {
@@ -193,10 +264,25 @@ const AdminDashboard: React.FC = () => {
       const orgName = plan.organizationName || 'Unknown Organization';
       
       if (!orgStats[orgName]) {
-        orgStats[orgName] = { planCount: 0, approved: 0, rejected: 0, pending: 0 };
+        orgStats[orgName] = { 
+          planCount: 0, 
+          approved: 0, 
+          rejected: 0, 
+          pending: 0,
+          totalBudget: 0,
+          availableFunding: 0,
+          fundingGap: 0
+        };
       }
       
       orgStats[orgName].planCount++;
+      
+      // Add budget data to organization stats
+      if (plan.budgetData) {
+        orgStats[orgName].totalBudget += plan.budgetData.totalBudget;
+        orgStats[orgName].availableFunding += plan.budgetData.availableFunding;
+        orgStats[orgName].fundingGap += plan.budgetData.fundingGap;
+      }
       
       switch (plan.status) {
         case 'APPROVED':
@@ -219,6 +305,9 @@ const AdminDashboard: React.FC = () => {
       submitted: newStats.submittedPlans,
       approved: newStats.approvedPlans,
       rejected: newStats.rejectedPlans,
+      totalBudget: newStats.totalBudget,
+      availableFunding: newStats.availableFunding,
+      fundingGap: newStats.fundingGap,
       orgs: Object.keys(orgStats).length
     });
 
@@ -407,42 +496,19 @@ const AdminDashboard: React.FC = () => {
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <Clock className="h-6 w-6 text-amber-400" />
+                <DollarSign className="h-6 w-6 text-green-400" />
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Pending Review</dt>
-                  <dd className="text-lg font-medium text-gray-900">{stats.submittedPlans}</dd>
-                </dl>
-              </div>
-            </div>
-          </div>
-          <div className="bg-amber-50 px-5 py-3">
-            <div className="text-sm">
-              <span className="text-amber-600">Awaiting evaluation</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <CheckCircle className="h-6 w-6 text-green-400" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Approved Plans</dt>
-                  <dd className="text-lg font-medium text-gray-900">{stats.approvedPlans}</dd>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Total Budget</dt>
+                  <dd className="text-lg font-medium text-gray-900">${stats.totalBudget.toLocaleString()}</dd>
                 </dl>
               </div>
             </div>
           </div>
           <div className="bg-green-50 px-5 py-3">
             <div className="text-sm">
-              <span className="text-green-600">
-                {stats.totalPlans > 0 ? Math.round((stats.approvedPlans / stats.totalPlans) * 100) : 0}% approval rate
-              </span>
+              <span className="text-green-600">Across all approved/submitted plans</span>
             </div>
           </div>
         </div>
@@ -451,19 +517,42 @@ const AdminDashboard: React.FC = () => {
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <Building2 className="h-6 w-6 text-blue-400" />
+                <DollarSign className="h-6 w-6 text-blue-400" />
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Organizations</dt>
-                  <dd className="text-lg font-medium text-gray-900">{Object.keys(stats.organizationStats).length}</dd>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Available Funding</dt>
+                  <dd className="text-lg font-medium text-gray-900">${stats.availableFunding.toLocaleString()}</dd>
                 </dl>
               </div>
             </div>
           </div>
           <div className="bg-blue-50 px-5 py-3">
             <div className="text-sm">
-              <span className="text-blue-600">Active planning units</span>
+              <span className="text-blue-600">Government + Partners + SDG + Other</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="p-5">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-6 w-6 text-red-400" />
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Funding Gap</dt>
+                  <dd className="text-lg font-medium text-gray-900">${stats.fundingGap.toLocaleString()}</dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+          <div className="bg-red-50 px-5 py-3">
+            <div className="text-sm">
+              <span className="text-red-600">
+                {stats.totalBudget > 0 ? Math.round((stats.fundingGap / stats.totalBudget) * 100) : 0}% unfunded
+              </span>
             </div>
           </div>
         </div>
@@ -522,7 +611,13 @@ const AdminDashboard: React.FC = () => {
                   Rejected
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Success Rate
+                  Total Budget
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Available Funding
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Funding Gap
                 </th>
               </tr>
             </thead>
@@ -532,8 +627,6 @@ const AdminDashboard: React.FC = () => {
                 .slice(0, 20) // Show top 20 organizations
                 .map(([orgName, orgStats]) => {
                   const orgData = orgStats as any;
-                  const successRate = orgData.planCount > 0 ? 
-                    Math.round((orgData.approved / orgData.planCount) * 100) : 0;
                   
                   return (
                     <tr key={orgName} className="hover:bg-gray-50">
@@ -562,15 +655,15 @@ const AdminDashboard: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div className="flex items-center">
-                          <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                            <div 
-                              className="bg-green-600 h-2 rounded-full" 
-                              style={{ width: `${successRate}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-sm text-gray-600">{successRate}%</span>
-                        </div>
+                        ${orgData.totalBudget.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        ${orgData.availableFunding.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <span className={`font-medium ${orgData.fundingGap > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          ${orgData.fundingGap.toLocaleString()}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -690,14 +783,14 @@ const AdminDashboard: React.FC = () => {
               <div className="text-sm text-gray-500">Total Plans Created</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">{Object.keys(stats.organizationStats).length}</div>
-              <div className="text-sm text-gray-500">Active Organizations</div>
+              <div className="text-2xl font-bold text-green-600">${stats.totalBudget.toLocaleString()}</div>
+              <div className="text-sm text-gray-500">Total System Budget</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-purple-600">
-                {stats.totalPlans > 0 ? Math.round((stats.approvedPlans / stats.totalPlans) * 100) : 0}%
+                {stats.totalBudget > 0 ? Math.round((stats.availableFunding / stats.totalBudget) * 100) : 0}%
               </div>
-              <div className="text-sm text-gray-500">Overall Success Rate</div>
+              <div className="text-sm text-gray-500">Funding Coverage Rate</div>
             </div>
           </div>
         </div>
