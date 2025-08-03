@@ -35,12 +35,12 @@ const PlanSummary: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isUserEvaluator, setIsUserEvaluator] = useState(false);
-  const [userOrgIds, setUserOrgIds] = useState<number[]>([]);
+  const [isUserAdmin, setIsUserAdmin] = useState(false);
   const [allOrganizationObjectives, setAllOrganizationObjectives] = useState<any[]>([]);
   const [isLoadingComplete, setIsLoadingComplete] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // Check if user has evaluator permissions
+  // Check user permissions
   useEffect(() => {
     const checkPermissions = async () => {
       try {
@@ -51,13 +51,7 @@ const PlanSummary: React.FC = () => {
         }
         
         setIsUserEvaluator(isEvaluator(authData.userOrganizations));
-        
-        // Get user's organization IDs
-        if (authData.userOrganizations && authData.userOrganizations.length > 0) {
-          const orgIds = authData.userOrganizations.map(org => org.organization);
-          setUserOrgIds(orgIds);
-          console.log('User organization IDs:', orgIds);
-        }
+        setIsUserAdmin(isAdmin(authData.userOrganizations));
       } catch (error) {
         console.error('Failed to check permissions:', error);
         setError('Failed to verify your permissions');
@@ -95,7 +89,7 @@ const PlanSummary: React.FC = () => {
   });
 
   // Function to fetch ALL objectives for the organization
-  const fetchSelectedObjectives = async (organizationId: number) => {
+  const fetchSelectedObjectives = async (organizationId: number | null = null) => {
     try {
       console.log(`[PlanSummary] === Fetching SELECTED objectives for plan ${planId} ===`);
       setIsLoadingComplete(true);
@@ -331,7 +325,7 @@ const PlanSummary: React.FC = () => {
             
             const allMeasures = measuresResponse?.data || [];
             const filteredMeasures = allMeasures.filter(measure =>
-              !measure.organization || measure.organization === organizationId
+              isUserAdmin ? true : (!measure.organization || measure.organization === organizationId)
             );
 
             // Fetch main activities with enhanced timeout handling
@@ -350,7 +344,7 @@ const PlanSummary: React.FC = () => {
             
             const allActivities = activitiesResponse?.data || [];
             const filteredActivities = allActivities.filter(activity =>
-              !activity.organization || activity.organization === organizationId
+              isUserAdmin ? true : (!activity.organization || activity.organization === organizationId)
             );
 
             console.log(`[PlanSummary]       ├── ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
@@ -414,7 +408,7 @@ const PlanSummary: React.FC = () => {
 
   // Fetch complete table data when requested
   const handleShowCompleteTable = async () => {
-    if (!planData?.organization) {
+    if (!planData?.organization && !isUserAdmin) {
       setError('Plan organization data not available');
       return;
     }
@@ -423,7 +417,9 @@ const PlanSummary: React.FC = () => {
       setShowCompleteTable(true);
       setError(null);
       
-      const completeObjectives = await fetchSelectedObjectives(Number(planData.organization));
+      // For admins, don't filter by organization
+      const orgId = isUserAdmin ? null : Number(planData.organization);
+      const completeObjectives = await fetchSelectedObjectives(orgId);
       setAllOrganizationObjectives(completeObjectives);
     } catch (error) {
       console.error('Error fetching complete data:', error);
@@ -504,9 +500,7 @@ const PlanSummary: React.FC = () => {
   }
 
   // Check if user can review this plan (evaluator for the same organization)
-  const canReview = isUserEvaluator && 
-                   userOrgIds.includes(Number(planData.organization)) && 
-                   planData.status === 'SUBMITTED';
+  const canReview = isUserEvaluator && planData.status === 'SUBMITTED';
 
   return (
     <div className="px-4 py-6 sm:px-0">
