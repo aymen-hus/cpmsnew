@@ -1,35 +1,48 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { plans, auth, api, objectives, initiatives, performanceMeasures, mainActivities } from '../lib/api';
+import { useLanguage } from '../lib/i18n/LanguageContext';
 import { 
   ArrowLeft, 
+  FileSpreadsheet, 
+  CheckCircle, 
+  XCircle, 
+  AlertCircle, 
+  Loader, 
+  Eye, 
   Building2, 
   User, 
-  Calendar, 
-  FileSpreadsheet, 
-  Target, 
-  Activity, 
-  DollarSign,
-  AlertCircle,
-  CheckCircle,
-  Loader
+  Calendar,
+  Target,
+  Activity,
+  DollarSign
 } from 'lucide-react';
-import { api, auth } from '../lib/api';
 import { format } from 'date-fns';
-import { isAdmin } from '../types/user';
+import PlanReviewForm from '../components/PlanReviewForm';
+import PlanReviewTable from '../components/PlanReviewTable';
+import { isEvaluator } from '../types/user';
+import { exportToExcel, processDataForExport } from '../lib/utils/export';
 
 const PlanSummary: React.FC = () => {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { t } = useLanguage();
   
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showCompleteTable, setShowCompleteTable] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [planData, setPlanData] = useState<any>(null);
-  const [isUserAdmin, setIsUserAdmin] = useState(false);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [isUserEvaluator, setIsUserEvaluator] = useState(false);
+  const [userOrgIds, setUserOrgIds] = useState<number[]>([]);
+  const [allOrganizationObjectives, setAllOrganizationObjectives] = useState<any[]>([]);
+  const [isLoadingComplete, setIsLoadingComplete] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  // Check admin permissions first
+  // Check if user has evaluator permissions
   useEffect(() => {
-    const checkAuth = async () => {
+    const checkPermissions = async () => {
       try {
         const authData = await auth.getCurrentUser();
         if (!authData.isAuthenticated) {
@@ -37,200 +50,443 @@ const PlanSummary: React.FC = () => {
           return;
         }
         
-        const userIsAdmin = isAdmin(authData.userOrganizations);
-        setIsUserAdmin(userIsAdmin);
-        console.log('User is admin:', userIsAdmin);
+        setIsUserEvaluator(isEvaluator(authData.userOrganizations));
+        
+        // Get user's organization IDs
+        if (authData.userOrganizations && authData.userOrganizations.length > 0) {
+          const orgIds = authData.userOrganizations.map(org => org.organization);
+          setUserOrgIds(orgIds);
+          console.log('User organization IDs:', orgIds);
+        }
       } catch (error) {
-        console.error('Failed to check auth:', error);
-        setError('Failed to verify authentication');
-      } finally {
-        setIsLoadingAuth(false);
+        console.error('Failed to check permissions:', error);
+        setError('Failed to verify your permissions');
       }
     };
     
-    checkAuth();
+    checkPermissions();
   }, [navigate]);
 
-  // Fetch plan data without any restrictions for admins
-  const { data: planResponse, isLoading } = useQuery({
-    queryKey: ['plan-summary', planId],
-    queryFn: async () => {
-      if (!planId) throw new Error('Plan ID is required');
-      
-      console.log('Fetching plan data for admin:', planId);
-      
-      try {
-        // Fetch basic plan data
-        const planResponse = await api.get(`/plans/${planId}/`);
-        const plan = planResponse.data;
-        
-        if (!plan) throw new Error('Plan not found');
-        
-        console.log('Plan fetched:', plan);
-        
-        // For admins, fetch ALL objectives data without organization restrictions
-        const processedPlan = {
-          ...plan,
-          objectives: [],
-          totalBudget: 0,
-          totalFunding: 0,
-          fundingGap: 0
-        };
+  // Fetch plan data
+  const { data: planData, isLoading } = useQuery({
+    queryKey: ['plan', planId],
+    queryFn: () => plans.getById(planId!),
+    enabled: !!planId,
+  });
 
-        // Fetch ALL objectives data - check selected_objectives first, then strategic_objective
-        let objectiveIds = [];
+  // Review mutation
+  const reviewMutation = useMutation({
+    mutationFn: async (reviewData: { status: 'APPROVED' | 'REJECTED', feedback: string }) => {
+      const response = await api.post(`/plans/${planId}/${reviewData.status.toLowerCase()}/`, {
+        feedback: reviewData.feedback
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plan', planId] });
+      setShowReviewModal(false);
+      setSuccess('Plan review submitted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    },
+    onError: (error: any) => {
+      console.error('Review error:', error);
+      setError(error.response?.data?.detail || 'Failed to submit review');
+    }
+  });
+
+  // Function to fetch ALL objectives for the organization
+  const fetchSelectedObjectives = async (organizationId: number) => {
+    try {
+      console.log(`[PlanSummary] === Fetching SELECTED objectives for plan ${planId} ===`);
+      setIsLoadingComplete(true);
+      
+      // Step 1: Get only the objectives selected for this plan
+      console.log('[PlanSummary] Step 1: Identifying selected objectives for this plan...');
+      
+      let selectedObjectiveIds: string[] = [];
+      
+      // Get the main strategic objective
+      if (planData?.strategic_objective) {
+        const mainObjId = String(planData.strategic_objective);
+        selectedObjectiveIds.push(mainObjId);
+        console.log('[PlanSummary] Added main strategic objective:', mainObjId);
+      }
+      
+      // Get ALL additional selected objectives if they exist
+      if (planData?.selected_objectives && Array.isArray(planData.selected_objectives)) {
+        const additionalIds = planData.selected_objectives
+          .filter((obj: any) => obj && (obj.id || obj))
+          .map((obj: any) => {
+            const id = typeof obj === 'object' ? obj.id : obj;
+            return String(id);
+          })
+          .filter(Boolean); // Remove empty strings
         
-        // Try to get all selected objectives first
-        if (plan.selected_objectives && Array.isArray(plan.selected_objectives) && plan.selected_objectives.length > 0) {
-          objectiveIds = plan.selected_objectives;
-          console.log('Found selected_objectives:', objectiveIds);
-        } else if (plan.strategic_objective) {
-          objectiveIds = [plan.strategic_objective];
-          console.log('Using single strategic_objective:', plan.strategic_objective);
+        console.log('[PlanSummary] Additional selected objective IDs:', additionalIds);
+        selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
+      } else if (planData?.selected_objectives && typeof planData.selected_objectives === 'object') {
+        // Handle case where selected_objectives is a single object
+        if (planData.selected_objectives.id || planData.selected_objectives) {
+          const objId = String(planData.selected_objectives.id || planData.selected_objectives);
+          if (objId) selectedObjectiveIds.push(objId);
+          console.log('[PlanSummary] Added single selected objective:', objId);
+        }
+      }
+      
+      // Also check if there are selected objectives in the plan data directly
+      if (planData?.objectives && Array.isArray(planData.objectives)) {
+        const directObjectiveIds = planData.objectives
+          .filter((obj: any) => obj && (obj.id || obj))
+          .map((obj: any) => {
+            const id = typeof obj === 'object' ? obj.id : obj;
+            return String(id);
+          })
+          .filter(Boolean); // Remove empty strings
+        
+        console.log('Direct objective IDs:', directObjectiveIds);
+        selectedObjectiveIds = [...selectedObjectiveIds, ...directObjectiveIds];
+      }
+      
+      // Remove duplicates
+      selectedObjectiveIds = [...new Set(selectedObjectiveIds)].filter(Boolean);
+      
+      console.log('[PlanSummary] 🎯 FINAL selected objective IDs for this plan:', selectedObjectiveIds);
+      console.log('[PlanSummary] 📊 Plan data structure for debugging:', {
+        plan_id: planId,
+        strategic_objective: planData?.strategic_objective,
+        selected_objectives_type: typeof planData?.selected_objectives,
+        selected_objectives_length: Array.isArray(planData?.selected_objectives) ? planData.selected_objectives.length : 'not array',
+        selected_objectives_sample: planData?.selected_objectives,
+        objectives_length: Array.isArray(planData?.objectives) ? planData.objectives.length : 'not array'
+      });
+      
+      if (selectedObjectiveIds.length === 0) {
+        console.error('[PlanSummary] ❌ No selected objectives found for this plan');
+        
+        // Fallback: if no selected objectives found, try to use the main strategic_objective
+        if (planData?.strategic_objective) {
+          const fallbackId = String(planData.strategic_objective);
+          console.warn('[PlanSummary] 🔄 Fallback: Using main strategic_objective as selected:', fallbackId);
+          selectedObjectiveIds = [fallbackId];
+        } else {
+          console.error('[PlanSummary] ❌ No fallback available, returning empty array');
+          return [];
+        }
+      }
+      
+      // Step 2: Fetch only the selected objectives
+      console.log(`[PlanSummary] Step 2: Fetching ${selectedObjectiveIds.length} selected objectives from system...`);
+      
+      // Enhanced objectives fetch with retry logic for production
+      let objectivesResponse;
+      let objectiveRetries = 0;
+      const maxRetries = 3;
+      
+      while (objectiveRetries <= maxRetries) {
+        try {
+          objectivesResponse = await Promise.race([
+            objectives.getAll(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Objectives fetch timeout')), 30000)
+            )
+          ]);
+          break;
+        } catch (objError) {
+          objectiveRetries++;
+          if (objectiveRetries > maxRetries) {
+            throw objError;
+          }
+          console.warn(`[PlanSummary] Objectives fetch retry ${objectiveRetries} for plan ${planId}`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * objectiveRetries));
+        }
+      }
+      
+      const allObjectives = objectivesResponse?.data || [];
+      
+      // Filter to only selected objectives
+      const selectedObjectives = allObjectives.filter((obj: any) => {
+        const objId = String(obj.id);
+        const isSelected = selectedObjectiveIds.includes(objId);
+        if (isSelected) {
+          console.log(`[PlanSummary] ✅ Found selected objective: ${objId} (${obj.title})`);
+        }
+        return isSelected;
+      });
+      
+      console.log(`[PlanSummary] 🎯 PRODUCTION CHECK: Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total objectives`);
+      
+      if (selectedObjectives.length !== selectedObjectiveIds.length) {
+        console.warn('[PlanSummary] ⚠️ MISMATCH: Expected', selectedObjectiveIds.length, 'objectives but found', selectedObjectives.length);
+        console.warn('[PlanSummary] 🔍 Looking for IDs:', selectedObjectiveIds);
+        console.warn('[PlanSummary] 📋 Available objective IDs in system:', allObjectives.slice(0, 10).map(obj => String(obj.id)));
+      }
+      
+      if (selectedObjectives.length === 0) {
+        console.error('[PlanSummary] ❌ PRODUCTION ERROR: No matching objectives found in system for selected IDs:', selectedObjectiveIds);
+        console.error('[PlanSummary] 📋 Available objective IDs in system (first 20):', allObjectives.slice(0, 20).map(obj => `${obj.id} (${obj.title})`));
+        console.error('[PlanSummary] 🔍 Selected IDs we were looking for:', selectedObjectiveIds);
+        console.error('[PlanSummary] 📊 Data type comparison:', {
+          selected_sample: selectedObjectiveIds[0],
+          available_sample: allObjectives[0]?.id,
+          selected_type: typeof selectedObjectiveIds[0],
+          available_type: typeof allObjectives[0]?.id
+        });
+        return [];
+      }
+      
+      // Step 3: Get ALL initiatives from the system
+      console.log('[PlanSummary] Step 3: Fetching ALL initiatives from system...');
+      
+      // Enhanced initiatives fetch with retry logic
+      let initiativesResponse;
+      let initiativeRetries = 0;
+      
+      while (initiativeRetries <= maxRetries) {
+        try {
+          initiativesResponse = await Promise.race([
+            initiatives.getAll(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Initiatives fetch timeout')), 35000)
+            )
+          ]);
+          break;
+        } catch (initError) {
+          initiativeRetries++;
+          if (initiativeRetries > maxRetries) {
+            throw initError;
+          }
+          console.warn(`[PlanSummary] Initiatives fetch retry ${initiativeRetries} for plan ${planId}`);
+          await new Promise(resolve => setTimeout(resolve, 3000 * initiativeRetries));
+        }
+      }
+      
+      const allInitiatives = initiativesResponse?.data || [];
+      console.log(`[PlanSummary] 📊 Found ${allInitiatives.length} total initiatives in system`);
+      
+      // Step 4: Filter initiatives for this organization and selected objectives
+      const orgInitiatives = allInitiatives.filter(initiative => {
+        // Check if initiative belongs to organization
+        const belongsToOrg = initiative.is_default || 
+                           !initiative.organization || 
+                           initiative.organization === organizationId;
+        
+        // Check if initiative belongs to selected objectives
+        const belongsToSelectedObjective = initiative.strategic_objective && 
+          selectedObjectiveIds.includes(String(initiative.strategic_objective));
+        
+        const shouldInclude = belongsToOrg && belongsToSelectedObjective;
+        
+        if (shouldInclude) {
+          console.log(`[PlanSummary] ✅ Including initiative: ${initiative.name} (objective: ${initiative.strategic_objective})`);
         }
         
-        // Process each objective
-        for (const objectiveId of objectiveIds) {
+        return shouldInclude;
+      });
+      console.log(`[PlanSummary] 🎯 PRODUCTION: Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId} and selected objectives`);
+      
+      // Step 5: Group initiatives by objective
+      const objectiveInitiativesMap: Record<string, any[]> = {};
+      orgInitiatives.forEach(initiative => {
+        const objectiveId = String(initiative.strategic_objective);
+        if (objectiveId) {
+          if (!objectiveInitiativesMap[objectiveId]) {
+            objectiveInitiativesMap[objectiveId] = [];
+          }
+          objectiveInitiativesMap[objectiveId].push(initiative);
+        }
+      });
+      
+      console.log('[PlanSummary] 📊 Initiatives grouped by selected objectives:', Object.keys(objectiveInitiativesMap).length, 'objectives have initiatives');
+      
+      // Step 6: Process each selected objective
+      const enrichedObjectives = [];
+      
+      for (const objective of selectedObjectives) {
+        console.log(`[PlanSummary] 📋 Processing SELECTED objective: ${objective.id} (${objective.title})`);
+        
+        const objectiveInitiatives = objectiveInitiativesMap[String(objective.id)] || [];
+        
+        console.log(`[PlanSummary]   ├── Found ${objectiveInitiatives.length} initiatives for this SELECTED objective`);
+        
+        // Process initiatives for this objective
+        const enrichedInitiatives = [];
+        
+        for (const initiative of objectiveInitiatives) {
           try {
-            console.log('Fetching objective:', objectiveId);
-            const objectiveResponse = await api.get(`/strategic-objectives/${objectiveId}/`);
-            const objective = objectiveResponse.data;
+            console.log(`[PlanSummary]     ├── Processing initiative: ${initiative.id} (${initiative.name})`);
             
-            if (objective) {
-              console.log('Fetched objective:', objective.title);
-              
-              // Fetch initiatives for this objective (NO organization filtering for admins)
-              const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${objectiveId}`);
-              const initiatives = initiativesResponse.data?.results || initiativesResponse.data || [];
-              
-              console.log(`Found ${initiatives.length} initiatives for objective ${objectiveId}`);
-              
-              // Process each initiative
-              for (const initiative of initiatives) {
-                // Fetch performance measures
-                try {
-                  const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
-                  initiative.performance_measures = measuresResponse.data?.results || measuresResponse.data || [];
-                  console.log(`Found ${initiative.performance_measures.length} measures for initiative ${initiative.id}`);
-                } catch (e) {
-                  console.warn('Failed to fetch measures for initiative:', initiative.id);
-                  initiative.performance_measures = [];
-                }
-                
-                // Fetch main activities
-                try {
-                  const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
-                  initiative.main_activities = activitiesResponse.data?.results || activitiesResponse.data || [];
-                  
-                  console.log(`Found ${initiative.main_activities.length} activities for initiative ${initiative.id}`);
-                  
-                  // Fetch budget for each activity
-                  for (const activity of initiative.main_activities) {
-                    try {
-                      const budgetResponse = await api.get(`/activity-budgets/?activity=${activity.id}`);
-                      const budgetData = budgetResponse.data?.results?.[0] || budgetResponse.data?.[0];
-                      
-                      if (budgetData) {
-                        activity.budget = budgetData;
-                        
-                        // Calculate budget totals
-                        const estimatedCost = budgetData.budget_calculation_type === 'WITH_TOOL' ? 
-                          Number(budgetData.estimated_cost_with_tool || 0) : 
-                          Number(budgetData.estimated_cost_without_tool || 0);
-                        
-                        const totalFunding = Number(budgetData.government_treasury || 0) +
-                                           Number(budgetData.sdg_funding || 0) +
-                                           Number(budgetData.partners_funding || 0) +
-                                           Number(budgetData.other_funding || 0);
-                        
-                        processedPlan.totalBudget += estimatedCost;
-                        processedPlan.totalFunding += totalFunding;
-                        processedPlan.fundingGap += Math.max(0, estimatedCost - totalFunding);
-                        
-                        console.log(`Activity ${activity.id} budget: estimated=${estimatedCost}, funding=${totalFunding}`);
-                      }
-                    } catch (e) {
-                      console.warn('Failed to fetch budget for activity:', activity.id);
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Failed to fetch activities for initiative:', initiative.id);
-                  initiative.main_activities = [];
-                }
-              }
-              
-              objective.initiatives = initiatives;
-              processedPlan.objectives = [objective];
-              console.log(`Processed objective: ${objective.title} with ${initiatives.length} initiatives`);
+            // Fetch performance measures with enhanced timeout handling
+            let measuresResponse;
+            try {
+              measuresResponse = await Promise.race([
+                performanceMeasures.getByInitiative(initiative.id),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Measures timeout')), 20000)
+                )
+              ]);
+            } catch (measuresError) {
+              console.warn(`[PlanSummary] Measures fetch timeout for initiative ${initiative.id}, using empty array`);
+              measuresResponse = { data: [] };
             }
-          } catch (e) {
-            console.warn(`Failed to fetch objective ${objectiveId} data:`, e);
+            
+            const allMeasures = measuresResponse?.data || [];
+            const filteredMeasures = allMeasures.filter(measure =>
+              !measure.organization || measure.organization === organizationId
+            );
+
+            // Fetch main activities with enhanced timeout handling
+            let activitiesResponse;
+            try {
+              activitiesResponse = await Promise.race([
+                mainActivities.getByInitiative(initiative.id),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Activities timeout')), 20000)
+                )
+              ]);
+            } catch (activitiesError) {
+              console.warn(`[PlanSummary] Activities fetch timeout for initiative ${initiative.id}, using empty array`);
+              activitiesResponse = { data: [] };
+            }
+            
+            const allActivities = activitiesResponse?.data || [];
+            const filteredActivities = allActivities.filter(activity =>
+              !activity.organization || activity.organization === organizationId
+            );
+
+            console.log(`[PlanSummary]       ├── ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: filteredMeasures,
+              main_activities: filteredActivities
+            });
+            
+            // Increased delay for production server protection
+            await new Promise(resolve => setTimeout(resolve, 300));
+          } catch (error) {
+            console.error(`[PlanSummary]     ❌ Error fetching data for initiative ${initiative.id}:`, {
+              message: error.message,
+              code: error.code
+            });
+            // Add initiative with empty data instead of skipping
+            enrichedInitiatives.push({
+              ...initiative,
+              performance_measures: [],
+              main_activities: []
+            });
           }
         }
         
-        console.log(`Total processed objectives: ${processedPlan.objectives.length}`);
-        console.log(`Total budget: ${processedPlan.totalBudget}, Total funding: ${processedPlan.totalFunding}`);
+        // Set effective weight
+        const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+          ? objective.planner_weight
+          : objective.weight;
+
+        enrichedObjectives.push({
+          ...objective,
+          effective_weight: effectiveWeight,
+          initiatives: enrichedInitiatives
+        });
         
-        return processedPlan;
-      } catch (error) {
-        console.error('Error fetching plan data:', error);
-        throw error;
+        console.log(`[PlanSummary]   ✅ Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+        
+        // Increased delay between objectives for production
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
-    },
-    enabled: !isLoadingAuth && !!planId,
-    retry: 2
-  });
-
-  // Update plan data when query succeeds
-  useEffect(() => {
-    if (planResponse) {
-      setPlanData(planResponse);
+      
+      console.log(`[PlanSummary] === ✅ PRODUCTION FINAL RESULT: ${enrichedObjectives.length} SELECTED objectives processed ===`);
+      const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
+      console.log(`[PlanSummary] 📊 Total initiatives across SELECTED objectives: ${totalInitiatives}`);
+      console.log(`[PlanSummary] 🎯 Selected objective titles:`, enrichedObjectives.map(obj => obj.title));
+      
+      return enrichedObjectives;
+    } catch (error) {
+      console.error('[PlanSummary] ❌ PRODUCTION Error in fetchSelectedObjectives:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      setIsLoadingComplete(false);
     }
-  }, [planResponse]);
+  };
 
-  const formatDateSafe = (dateString: string | null | undefined) => {
-    if (!dateString) return 'N/A';
+  // Fetch complete table data when requested
+  const handleShowCompleteTable = async () => {
+    if (!planData?.organization) {
+      setError('Plan organization data not available');
+      return;
+    }
+    
+    try {
+      setShowCompleteTable(true);
+      setError(null);
+      
+      const completeObjectives = await fetchSelectedObjectives(Number(planData.organization));
+      setAllOrganizationObjectives(completeObjectives);
+    } catch (error) {
+      console.error('Error fetching complete data:', error);
+      setError('Failed to load selected objectives data');
+    }
+  };
+
+  // Handle Excel export
+  const handleExportToExcel = () => {
+    try {
+      setExportError(null);
+      
+      if (!allOrganizationObjectives || allOrganizationObjectives.length === 0) {
+        setExportError('No data available to export. Please load the complete table first.');
+        return;
+      }
+      
+      console.log('Exporting to Excel with data:', allOrganizationObjectives.length, 'objectives');
+      
+      const exportData = processDataForExport(allOrganizationObjectives, 'en');
+      exportToExcel(
+        exportData,
+        `plan-${planData?.organization_name || 'organization'}-${new Date().toISOString().slice(0, 10)}`,
+        'en',
+        {
+          organization: planData?.organization_name || 'Unknown Organization',
+          planner: planData?.planner_name || 'Unknown Planner',
+          fromDate: planData?.from_date || '',
+          toDate: planData?.to_date || '',
+          planType: planData?.type || 'Unknown Type'
+        }
+      );
+      
+      setSuccess('Excel file exported successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (error) {
+      console.error('Export error:', error);
+      setExportError('Failed to export Excel file. Please try again.');
+    }
+  };
+
+  const handleReviewSubmit = async (data: { status: 'APPROVED' | 'REJECTED'; feedback: string }) => {
+    try {
+      setError(null);
+      await reviewMutation.mutateAsync(data);
+    } catch (error) {
+      console.error('Failed to submit review:', error);
+    }
+  };
+
+  const formatDate = (dateString: string) => {
     try {
       return format(new Date(dateString), 'MMM d, yyyy');
     } catch (e) {
-      return 'Invalid date';
+      return dateString;
     }
   };
 
-  const formatCurrency = (value: any): string => {
-    if (!value || value === 'N/A') return '-';
-    const numValue = typeof value === 'string' ? parseFloat(value) : value;
-    if (isNaN(numValue)) return '-';
-    return `$${numValue.toLocaleString()}`;
-  };
-
-  if (isLoadingAuth || isLoading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <Loader className="h-10 w-10 text-blue-600 animate-spin mb-4 mx-auto" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Plan Data</h3>
-          <p className="text-gray-600">Fetching plan details...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center p-8 bg-red-50 rounded-lg border border-red-200 max-w-md">
-          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-red-800 mb-2">Error Loading Plan</h3>
-          <p className="text-red-600 mb-4">{error}</p>
-          <button
-            onClick={() => navigate('/admin')}
-            className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200"
-          >
-            <ArrowLeft className="h-4 w-4 inline mr-2" />
-            Back to Dashboard
-          </button>
-        </div>
+        <Loader className="h-6 w-6 animate-spin mr-2 text-green-600" />
+        <span className="text-lg">Loading plan details...</span>
       </div>
     );
   }
@@ -238,294 +494,328 @@ const PlanSummary: React.FC = () => {
   if (!planData) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center p-8 bg-yellow-50 rounded-lg border border-yellow-200 max-w-md">
-          <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-yellow-800 mb-2">Plan Not Found</h3>
-          <p className="text-yellow-600 mb-4">The requested plan could not be found.</p>
-          <button
-            onClick={() => navigate('/admin')}
-            className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200"
-          >
-            <ArrowLeft className="h-4 w-4 inline mr-2" />
-            Back to Dashboard
-          </button>
+        <div className="text-center p-8 bg-red-50 rounded-lg border border-red-200">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-red-800 mb-2">Plan Not Found</h3>
+          <p className="text-red-600">The requested plan could not be found.</p>
         </div>
       </div>
     );
   }
 
+  // Check if user can review this plan (evaluator for the same organization)
+  const canReview = isUserEvaluator && 
+                   userOrgIds.includes(Number(planData.organization)) && 
+                   planData.status === 'SUBMITTED';
+
   return (
     <div className="px-4 py-6 sm:px-0">
-      {/* Header */}
       <div className="mb-6">
         <button
-          onClick={() => navigate('/admin')}
+          onClick={() => navigate(-1)}
           className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
         >
           <ArrowLeft className="h-5 w-5 mr-1" />
-          Back to Admin Dashboard
+          Back
         </button>
         
         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Plan Summary</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Plan Details</h1>
           
-          {/* Plan Header Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             <div className="flex items-center">
-              <Building2 className="h-4 w-4 text-gray-500 mr-2" />
+              <Building2 className="h-5 w-5 text-gray-500 mr-2" />
               <div>
-                <p className="text-gray-500">Organization</p>
-                <p className="font-medium">{planData.organization_name || 'Unknown Organization'}</p>
+                <p className="text-sm text-gray-500">Organization</p>
+                <p className="font-medium">{planData.organization_name}</p>
               </div>
             </div>
+            
             <div className="flex items-center">
-              <User className="h-4 w-4 text-gray-500 mr-2" />
+              <User className="h-5 w-5 text-gray-500 mr-2" />
               <div>
-                <p className="text-gray-500">Planner</p>
-                <p className="font-medium">{planData.planner_name || 'Unknown'}</p>
+                <p className="text-sm text-gray-500">Planner</p>
+                <p className="font-medium">{planData.planner_name}</p>
               </div>
             </div>
+            
             <div className="flex items-center">
-              <Calendar className="h-4 w-4 text-gray-500 mr-2" />
+              <Calendar className="h-5 w-5 text-gray-500 mr-2" />
               <div>
-                <p className="text-gray-500">Period</p>
+                <p className="text-sm text-gray-500">Period</p>
                 <p className="font-medium">
-                  {formatDateSafe(planData.from_date)} - {formatDateSafe(planData.to_date)}
+                  {formatDate(planData.from_date)} - {formatDate(planData.to_date)}
                 </p>
               </div>
             </div>
+            
             <div className="flex items-center">
-              <FileSpreadsheet className="h-4 w-4 text-gray-500 mr-2" />
+              <Target className="h-5 w-5 text-gray-500 mr-2" />
               <div>
-                <p className="text-gray-500">Plan Type</p>
-                <p className="font-medium">{planData.type || 'Strategic Plan'}</p>
+                <p className="text-sm text-gray-500">Plan Type</p>
+                <p className="font-medium">{planData.type}</p>
               </div>
             </div>
+            
+            <div className="flex items-center">
+              <Activity className="h-5 w-5 text-gray-500 mr-2" />
+              <div>
+                <p className="text-sm text-gray-500">Status</p>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  planData.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
+                  planData.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
+                  planData.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {planData.status}
+                </span>
+              </div>
+            </div>
+            
+            {planData.submitted_at && (
+              <div className="flex items-center">
+                <Calendar className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <p className="text-sm text-gray-500">Submitted</p>
+                  <p className="font-medium">{formatDate(planData.submitted_at)}</p>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Status */}
-          <div className="mt-4 flex items-center">
-            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-              planData.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
-              planData.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
-              planData.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
-              'bg-gray-100 text-gray-800'
-            }`}>
-              {planData.status}
-            </span>
-            {planData.submitted_at && (
-              <span className="ml-4 text-sm text-gray-500">
-                Submitted: {formatDateSafe(planData.submitted_at)}
-              </span>
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={handleShowCompleteTable}
+              disabled={isLoadingComplete}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            >
+              {isLoadingComplete ? (
+                <>
+                  <Loader className="h-4 w-4 mr-2 animate-spin" />
+                  Loading Complete Data...
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Show Complete Table View
+                </>
+              )}
+            </button>
+
+            {canReview && (
+              <button
+                onClick={() => setShowReviewModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Review Plan
+              </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Budget Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Total Budget</p>
-              <p className="text-2xl font-semibold text-blue-600">{formatCurrency(planData.totalBudget)}</p>
-            </div>
-            <DollarSign className="h-8 w-8 text-blue-600" />
-          </div>
+      {/* Error and Success Messages */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-700">
+          <AlertCircle className="h-5 w-5 mr-2" />
+          {error}
         </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Available Funding</p>
-              <p className="text-2xl font-semibold text-green-600">{formatCurrency(planData.totalFunding)}</p>
-            </div>
-            <CheckCircle className="h-8 w-8 text-green-600" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Funding Gap</p>
-              <p className="text-2xl font-semibold text-red-600">{formatCurrency(planData.fundingGap)}</p>
-            </div>
-            <AlertCircle className="h-8 w-8 text-red-600" />
-          </div>
-        </div>
-      </div>
+      )}
 
-      {/* Plan Details Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Plan Details</h3>
+      {success && (
+        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center text-green-700">
+          <CheckCircle className="h-5 w-5 mr-2" />
+          {success}
         </div>
-        
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-green-600">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Strategic Objective
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Weight
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Strategic Initiative
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Performance Measure/Main Activity
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Baseline
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Annual Target
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Budget Required
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Available Funding
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Gap
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {planData.objectives && planData.objectives.length > 0 ? (
-                planData.objectives.map((objective: any, objIndex: number) => {
-                  const rows: JSX.Element[] = [];
-                  const effectiveWeight = objective.planner_weight || objective.weight;
-                  
-                  if (!objective.initiatives || objective.initiatives.length === 0) {
-                    rows.push(
-                      <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm font-medium text-gray-900">{objective.title}</td>
-                        <td className="px-6 py-4 text-sm text-gray-900">{effectiveWeight}%</td>
-                        <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                        <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                      </tr>
-                    );
-                  } else {
-                    objective.initiatives.forEach((initiative: any, initIndex: number) => {
-                      const performanceMeasures = initiative.performance_measures || [];
-                      const mainActivities = initiative.main_activities || [];
-                      const allItems = [...performanceMeasures, ...mainActivities];
-                      
-                      if (allItems.length === 0) {
-                        rows.push(
-                          <tr key={`init-${initiative.id}-empty`} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                              {objIndex === 0 && initIndex === 0 ? objective.title : ''}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-900">
-                              {objIndex === 0 && initIndex === 0 ? `${effectiveWeight}%` : ''}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-900">{initiative.name}</td>
-                            <td className="px-6 py-4 text-sm text-gray-500 italic">No measures or activities</td>
-                            <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                            <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                            <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                            <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                            <td className="px-6 py-4 text-sm text-gray-500">-</td>
-                          </tr>
-                        );
-                      } else {
-                        allItems.forEach((item: any, itemIndex: number) => {
-                          const isFirstRow = objIndex === 0 && initIndex === 0 && itemIndex === 0;
-                          const isFirstInitiativeRow = itemIndex === 0;
-                          const isPerformanceMeasure = performanceMeasures.includes(item);
-                          
-                          // Calculate budget values
-                          let budgetRequired = 0;
-                          let totalFunding = 0;
-                          let gap = 0;
-                          
-                          if (!isPerformanceMeasure && item.budget) {
-                            budgetRequired = item.budget.budget_calculation_type === 'WITH_TOOL' ? 
-                              Number(item.budget.estimated_cost_with_tool || 0) : 
-                              Number(item.budget.estimated_cost_without_tool || 0);
-                            
-                            totalFunding = Number(item.budget.government_treasury || 0) +
-                                          Number(item.budget.sdg_funding || 0) +
-                                          Number(item.budget.partners_funding || 0) +
-                                          Number(item.budget.other_funding || 0);
-                            
-                            gap = Math.max(0, budgetRequired - totalFunding);
-                          }
+      )}
 
-                          rows.push(
-                            <tr key={`${item.id}-${itemIndex}`} className="hover:bg-gray-50">
-                              <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                                {isFirstRow ? objective.title : ''}
-                              </td>
-                              <td className="px-6 py-4 text-sm text-gray-900">
-                                {isFirstRow ? `${effectiveWeight}%` : ''}
-                              </td>
-                              <td className="px-6 py-4 text-sm text-gray-900">
-                                {isFirstInitiativeRow ? initiative.name : ''}
-                              </td>
-                              <td className="px-6 py-4 text-sm text-gray-900">
-                                <div className="flex items-center">
-                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mr-2 ${
-                                    isPerformanceMeasure ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'
-                                  }`}>
-                                    {isPerformanceMeasure ? 'PM' : 'MA'}
-                                  </span>
-                                  {item.name}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-sm text-gray-900">{item.baseline || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-gray-900">{item.annual_target || 0}</td>
-                              <td className="px-6 py-4 text-sm text-gray-900">{formatCurrency(budgetRequired)}</td>
-                              <td className="px-6 py-4 text-sm text-gray-900">{formatCurrency(totalFunding)}</td>
-                              <td className="px-6 py-4 text-sm text-gray-900">{formatCurrency(gap)}</td>
-                            </tr>
-                          );
-                        });
-                      }
-                    });
-                  }
-                  
-                  return rows;
-                })
+      {exportError && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center text-red-700">
+          <AlertCircle className="h-5 w-5 mr-2" />
+          {exportError}
+        </div>
+      )}
+
+      {/* Plan Reviews Section */}
+      {planData.reviews && planData.reviews.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">Review History</h2>
+          <div className="space-y-4">
+            {planData.reviews.map((review: any) => (
+              <div key={review.id} className={`p-4 rounded-lg border ${
+                review.status === 'APPROVED' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center">
+                    {review.status === 'APPROVED' ? (
+                      <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                    ) : (
+                      <XCircle className="h-5 w-5 text-red-600 mr-2" />
+                    )}
+                    <span className={`font-medium ${
+                      review.status === 'APPROVED' ? 'text-green-800' : 'text-red-800'
+                    }`}>
+                      {review.status}
+                    </span>
+                  </div>
+                  <span className="text-sm text-gray-500">
+                    {formatDate(review.reviewed_at)}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-700">{review.feedback}</p>
+                {review.evaluator_name && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Reviewed by: {review.evaluator_name}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Complete Table Modal */}
+      {showCompleteTable && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-gray-900">Complete Organization Data</h2>
+              <div className="flex items-center gap-2">
+                {/* Excel Export Button */}
+                <button
+                  onClick={handleExportToExcel}
+                  disabled={!allOrganizationObjectives || allOrganizationObjectives.length === 0}
+                  className="flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export Excel
+                </button>
+                
+                {/* Close Button */}
+                <button
+                  onClick={() => {
+                    setShowCompleteTable(false);
+                    setAllOrganizationObjectives([]);
+                    setExportError(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-500 focus:outline-none"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              {isLoadingComplete ? (
+                <div className="p-12 text-center">
+                  <Loader className="h-10 w-10 mx-auto text-green-500 animate-spin" />
+                  <p className="mt-4 text-gray-600 text-lg">Loading complete organization data...</p>
+                  <p className="mt-2 text-sm text-gray-500">
+                    Fetching only the objectives selected for this plan...
+                  </p>
+                  <div className="mt-4 w-64 bg-gray-200 rounded-full h-2 mx-auto">
+                    <div className="bg-green-600 h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">This may take up to 1 minute in production</p>
+                </div>
+              ) : allOrganizationObjectives.length > 0 ? (
+                <div>
+                  {/* Data Summary */}
+                  <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <h3 className="text-sm font-medium text-blue-800 mb-2">Data Summary</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-blue-600">Organization:</span>
+                        <span className="font-medium ml-1">{planData.organization_name}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Selected Objectives:</span>
+                        <span className="font-medium ml-1">{allOrganizationObjectives.length}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Total Initiatives:</span>
+                        <span className="font-medium ml-1">
+                          {allOrganizationObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-xs text-blue-600">
+                      <p><strong>Note:</strong> This shows only the objectives selected by the planner for this specific plan.</p>
+                    </div>
+                  </div>
+
+                  {/* Complete Table */}
+                  <PlanReviewTable
+                    objectives={allOrganizationObjectives}
+                    onSubmit={async () => {}}
+                    isSubmitting={false}
+                    organizationName={planData.organization_name || 'Unknown Organization'}
+                    plannerName={planData.planner_name || 'Unknown Planner'}
+                    fromDate={planData.from_date || ''}
+                    toDate={planData.to_date || ''}
+                    planType={planData.type || 'Unknown Type'}
+                    isPreviewMode={true}
+                    userOrgId={Number(planData.organization)}
+                    isViewOnly={true}
+                  />
+                </div>
               ) : (
-                <tr>
-                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
-                    No plan data available
-                  </td>
-                </tr>
+                <div className="p-8 text-center bg-yellow-50 rounded-lg border border-yellow-200">
+                  <AlertCircle className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-yellow-800 mb-2">No Selected Objectives Data</h3>
+                  <p className="text-yellow-700 mb-4">
+                    No objectives were found for this plan. This could be due to:
+                  </p>
+                  <ul className="text-left text-yellow-700 mb-4 text-sm">
+                    <li>• The planner didn't select any objectives for this plan</li>
+                    <li>• Network timeout while fetching objectives data</li>
+                    <li>• Data synchronization issues between local and production</li>
+                  </ul>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={handleShowCompleteTable}
+                      className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors"
+                    >
+                      Retry Loading Data
+                    </button>
+                    <button
+                      onClick={() => setShowCompleteTable(false)}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
               )}
-              
-              {/* Summary Row */}
-              {planData.totalBudget > 0 && (
-                <tr className="bg-blue-50 border-t-2 border-blue-200">
-                  <td colSpan={6} className="px-6 py-4 text-sm font-medium text-gray-900 text-right">
-                    TOTAL BUDGET
-                  </td>
-                  <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                    {formatCurrency(planData.totalBudget)}
-                  </td>
-                  <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                    {formatCurrency(planData.totalFunding)}
-                  </td>
-                  <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                    {formatCurrency(planData.fundingGap)}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Review Modal */}
+      {showReviewModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Review Plan: {planData.organization_name}
+            </h3>
+            
+            <PlanReviewForm
+              plan={planData}
+              onSubmit={handleReviewSubmit}
+              onCancel={() => setShowReviewModal(false)}
+              isSubmitting={reviewMutation.isPending}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
