@@ -68,7 +68,7 @@ const PlanSummary: React.FC = () => {
         
         console.log('Plan fetched:', plan);
         
-        // For admins, fetch ALL data without organization restrictions
+        // For admins, fetch ALL objectives data without organization restrictions
         const processedPlan = {
           ...plan,
           objectives: [],
@@ -77,16 +77,33 @@ const PlanSummary: React.FC = () => {
           fundingGap: 0
         };
 
-        // Fetch objectives data
-        if (plan.strategic_objective) {
+        // Fetch ALL objectives data - check selected_objectives first, then strategic_objective
+        let objectiveIds = [];
+        
+        // Try to get all selected objectives first
+        if (plan.selected_objectives && Array.isArray(plan.selected_objectives) && plan.selected_objectives.length > 0) {
+          objectiveIds = plan.selected_objectives;
+          console.log('Found selected_objectives:', objectiveIds);
+        } else if (plan.strategic_objective) {
+          objectiveIds = [plan.strategic_objective];
+          console.log('Using single strategic_objective:', plan.strategic_objective);
+        }
+        
+        // Process each objective
+        for (const objectiveId of objectiveIds) {
           try {
-            const objectiveResponse = await api.get(`/strategic-objectives/${plan.strategic_objective}/`);
+            console.log('Fetching objective:', objectiveId);
+            const objectiveResponse = await api.get(`/strategic-objectives/${objectiveId}/`);
             const objective = objectiveResponse.data;
             
             if (objective) {
-              // Fetch initiatives for this objective
-              const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${plan.strategic_objective}`);
+              console.log('Fetched objective:', objective.title);
+              
+              // Fetch initiatives for this objective (NO organization filtering for admins)
+              const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${objectiveId}`);
               const initiatives = initiativesResponse.data?.results || initiativesResponse.data || [];
+              
+              console.log(`Found ${initiatives.length} initiatives for objective ${objectiveId}`);
               
               // Process each initiative
               for (const initiative of initiatives) {
@@ -94,6 +111,7 @@ const PlanSummary: React.FC = () => {
                 try {
                   const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
                   initiative.performance_measures = measuresResponse.data?.results || measuresResponse.data || [];
+                  console.log(`Found ${initiative.performance_measures.length} measures for initiative ${initiative.id}`);
                 } catch (e) {
                   console.warn('Failed to fetch measures for initiative:', initiative.id);
                   initiative.performance_measures = [];
@@ -103,6 +121,8 @@ const PlanSummary: React.FC = () => {
                 try {
                   const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
                   initiative.main_activities = activitiesResponse.data?.results || activitiesResponse.data || [];
+                  
+                  console.log(`Found ${initiative.main_activities.length} activities for initiative ${initiative.id}`);
                   
                   // Fetch budget for each activity
                   for (const activity of initiative.main_activities) {
@@ -126,6 +146,8 @@ const PlanSummary: React.FC = () => {
                         processedPlan.totalBudget += estimatedCost;
                         processedPlan.totalFunding += totalFunding;
                         processedPlan.fundingGap += Math.max(0, estimatedCost - totalFunding);
+                        
+                        console.log(`Activity ${activity.id} budget: estimated=${estimatedCost}, funding=${totalFunding}`);
                       }
                     } catch (e) {
                       console.warn('Failed to fetch budget for activity:', activity.id);
@@ -139,11 +161,16 @@ const PlanSummary: React.FC = () => {
               
               objective.initiatives = initiatives;
               processedPlan.objectives = [objective];
+              console.log(`Processed objective: ${objective.title} with ${initiatives.length} initiatives`);
             }
           } catch (e) {
-            console.warn('Failed to fetch objective data:', e);
+            console.warn(`Failed to fetch objective ${objectiveId} data:`, e);
           }
         }
+        }
+        
+        console.log(`Total processed objectives: ${processedPlan.objectives.length}`);
+        console.log(`Total budget: ${processedPlan.totalBudget}, Total funding: ${processedPlan.totalFunding}`);
         
         return processedPlan;
       } catch (error) {
