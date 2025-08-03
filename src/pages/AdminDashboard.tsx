@@ -422,7 +422,19 @@ const AdminDashboard: React.FC = () => {
 
   // Handle view plan navigation
   const handleViewPlan = (planId: string) => {
-    navigate(`/plans/${planId}`);
+    console.log('Navigating to plan:', planId);
+    if (!planId) {
+      console.error('No plan ID provided');
+      setError('Invalid plan ID');
+      return;
+    }
+    
+    try {
+      navigate(`/plans/${planId}`);
+    } catch (error) {
+      console.error('Navigation error:', error);
+      setError('Failed to navigate to plan');
+    }
   };
   // Loading state
   if (isLoading) {
@@ -765,7 +777,17 @@ const AdminDashboard: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <button
-                        onClick={() => handleViewPlan(plan.id)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('View button clicked for plan:', plan.id, plan);
+                          if (plan && plan.id) {
+                            handleViewPlan(plan.id.toString());
+                          } else {
+                            console.error('Invalid plan data:', plan);
+                            setError('Invalid plan data');
+                          }
+                        }}
                         className="text-blue-600 hover:text-blue-900 flex items-center"
                       >
                         <Eye className="h-4 w-4 mr-1" />
