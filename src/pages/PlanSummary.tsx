@@ -39,8 +39,6 @@ const PlanSummary: React.FC = () => {
   const [processedObjectives, setProcessedObjectives] = useState<any[]>([]);
   const [isLoadingComplete, setIsLoadingComplete] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [isUserEvaluator, setIsUserEvaluator] = useState(false);
-  const [userOrgIds, setUserOrgIds] = useState<number[]>([]);
 
   // Check if user has evaluator permissions
   useEffect(() => {
