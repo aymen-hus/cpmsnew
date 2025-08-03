@@ -78,34 +78,44 @@ const AdminDashboard: React.FC = () => {
       try {
         console.log('Fetching all plans for admin analytics...');
         
-        // Production-safe API call with retry logic
+        // Enhanced production-safe API call with improved retry logic
         let response;
         let retryCount = 0;
-        const maxRetries = 3;
+        const maxRetries = 4; // Increased retries for production
         
         while (retryCount < maxRetries) {
           try {
-            console.log(`Fetching plans attempt ${retryCount + 1}/${maxRetries}`);
+            console.log(`[AdminDashboard] Fetching plans attempt ${retryCount + 1}/${maxRetries}`);
+            
+            // Progressive timeout increase for production
+            const baseTimeout = 15000; // Start with 15s
+            const timeout = Math.min(60000, baseTimeout + (retryCount * 15000)); // Max 60s
+            
             response = await api.get('/plans/', {
-              timeout: Math.min(30000, 10000 + (retryCount * 10000)), // Increase timeout on retries
+              timeout: timeout,
               headers: { 
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'Connection': 'keep-alive'
               }
             });
-            console.log('Successfully fetched plans on attempt', retryCount + 1);
+            console.log(`[AdminDashboard] Successfully fetched plans on attempt ${retryCount + 1} (timeout: ${timeout}ms)`);
             break;
           } catch (attemptError) {
             retryCount++;
-            console.warn(`Plans fetch attempt ${retryCount} failed:`, attemptError);
+            console.warn(`[AdminDashboard] Plans fetch attempt ${retryCount} failed:`, {
+              message: attemptError.message,
+              code: attemptError.code,
+              timeout: attemptError.timeout
+            });
             
             if (retryCount >= maxRetries) {
               throw attemptError;
             }
             
-            // Wait before retry with exponential backoff
-            const waitTime = Math.min(5000, 1000 * Math.pow(2, retryCount - 1));
-            console.log(`Waiting ${waitTime}ms before retry...`);
+            // Enhanced exponential backoff for production
+            const waitTime = Math.min(10000, 2000 * Math.pow(2, retryCount - 1));
+            console.log(`[AdminDashboard] Waiting ${waitTime}ms before retry...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
           }
         }
@@ -126,19 +136,35 @@ const AdminDashboard: React.FC = () => {
         });
         
         // Fetch complete budget data for each plan
-        await fetchCompleteBudgetData(plans);
+        try {
+          await fetchCompleteBudgetData(plans);
+        } catch (budgetError) {
+          console.warn('[AdminDashboard] Budget fetch failed, continuing with basic plan data:', budgetError);
+          // Don't throw here - just continue with plans without budget data
+        }
         
         return plans;
       } catch (error) {
-        console.error('Failed to fetch all plans:', error);
+        console.error('[AdminDashboard] Final error after all retries:', {
+          message: error.message,
+          code: error.code,
+          stack: error.stack
+        });
         throw error;
       }
     },
     enabled: Object.keys(organizationsMap).length > 0,
-    retry: 2,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-    refetchInterval: 300000, // Refresh every 5 minutes instead of 1 minute
-    staleTime: 60000 // Consider data stale after 1 minute
+    retry: (failureCount, error) => {
+      // Only retry on timeout/network errors, not on auth errors
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        return false;
+      }
+      return failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
+    refetchInterval: 600000, // Refresh every 10 minutes for production
+    staleTime: 300000, // Consider data stale after 5 minutes
+    cacheTime: 600000 // Keep in cache for 10 minutes
   });
 
   // Function to fetch complete budget data for plans
@@ -170,25 +196,64 @@ const AdminDashboard: React.FC = () => {
       
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
-        console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} plans`);
+        console.log(`[AdminDashboard] Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} plans`);
         
         // Process each plan in the current batch
         await Promise.all(batch.map(async (plan, planIndex) => {
         try {
-          console.log(`Processing plan ${plan.id} (${batchIndex * batchSize + planIndex + 1}/${eligiblePlans.length})`);
+          console.log(`[AdminDashboard] Processing plan ${plan.id} (${batchIndex * batchSize + planIndex + 1}/${eligiblePlans.length})`);
           
-          // Fetch objectives for this plan's organization with production timeout
-          const objectivesResponse = await api.get('/strategic-objectives/', {
-            timeout: 20000,
-            headers: { 'Accept': 'application/json' }
-          });
+          // Fetch objectives with enhanced retry logic
+          let objectivesResponse;
+          let objectiveRetries = 0;
+          const maxObjectiveRetries = 2;
+          
+          while (objectiveRetries <= maxObjectiveRetries) {
+            try {
+              objectivesResponse = await api.get('/strategic-objectives/', {
+                timeout: 25000 + (objectiveRetries * 10000), // 25s, 35s, 45s
+                headers: { 
+                  'Accept': 'application/json',
+                  'Cache-Control': 'no-cache'
+                }
+              });
+              break;
+            } catch (objError) {
+              objectiveRetries++;
+              if (objectiveRetries > maxObjectiveRetries) {
+                throw objError;
+              }
+              console.warn(`[AdminDashboard] Objectives retry ${objectiveRetries} for plan ${plan.id}`);
+              await new Promise(resolve => setTimeout(resolve, 2000 * objectiveRetries));
+            }
+          }
+          
           const allObjectives = objectivesResponse?.data || [];
           
-          // Fetch initiatives for this organization
-          const initiativesResponse = await api.get('/strategic-initiatives/', {
-            timeout: 20000,
-            headers: { 'Accept': 'application/json' }
-          });
+          // Fetch initiatives with retry logic
+          let initiativesResponse;
+          let initiativeRetries = 0;
+          
+          while (initiativeRetries <= maxObjectiveRetries) {
+            try {
+              initiativesResponse = await api.get('/strategic-initiatives/', {
+                timeout: 25000 + (initiativeRetries * 10000),
+                headers: { 
+                  'Accept': 'application/json',
+                  'Cache-Control': 'no-cache'
+                }
+              });
+              break;
+            } catch (initError) {
+              initiativeRetries++;
+              if (initiativeRetries > maxObjectiveRetries) {
+                throw initError;
+              }
+              console.warn(`[AdminDashboard] Initiatives retry ${initiativeRetries} for plan ${plan.id}`);
+              await new Promise(resolve => setTimeout(resolve, 2000 * initiativeRetries));
+            }
+          }
+          
           const allInitiatives = initiativesResponse?.data || [];
           
           // Filter initiatives for this organization
@@ -207,10 +272,23 @@ const AdminDashboard: React.FC = () => {
           // For each initiative, fetch main activities and their budgets
           for (const initiative of orgInitiatives) {
             try {
-              const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`, {
-                timeout: 15000,
-                headers: { 'Accept': 'application/json' }
-              });
+              // Fetch activities with timeout protection
+              let activitiesResponse;
+              try {
+                activitiesResponse = await Promise.race([
+                  api.get(`/main-activities/?initiative=${initiative.id}`, {
+                    timeout: 20000,
+                    headers: { 'Accept': 'application/json' }
+                  }),
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Activities timeout')), 25000)
+                  )
+                ]);
+              } catch (timeoutError) {
+                console.warn(`[AdminDashboard] Activities timeout for initiative ${initiative.id}, using empty array`);
+                activitiesResponse = { data: { results: [] } };
+              }
+              
               const activities = activitiesResponse?.data?.results || activitiesResponse?.data || [];
               
               // Filter activities for this organization
@@ -234,9 +312,13 @@ const AdminDashboard: React.FC = () => {
               }
               
               // Small delay to prevent server overload
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 500)); // Increased delay for production
             } catch (activityError) {
-              console.warn(`Error fetching activities for initiative ${initiative.id}:`, activityError);
+              console.warn(`[AdminDashboard] Error fetching activities for initiative ${initiative.id}:`, {
+                message: activityError.message,
+                code: activityError.code
+              });
+              // Continue with next initiative instead of failing entire batch
             }
           }
           
@@ -249,16 +331,20 @@ const AdminDashboard: React.FC = () => {
           plan.funded_total = planGovernmentBudget + planSdgBudget + planPartnersBudget + planOtherBudget;
           plan.funding_gap = Math.max(0, planTotalBudget - plan.funded_total);
           
-          console.log(`Plan ${plan.id} budget calculated:`, {
+          console.log(`[AdminDashboard] Plan ${plan.id} budget calculated:`, {
             total: planTotalBudget,
             funded: plan.funded_total,
             gap: plan.funding_gap
           });
           
-          // Small delay between plans
-          await new Promise(resolve => setTimeout(resolve, 300));
+          // Increased delay between plans for production
+          await new Promise(resolve => setTimeout(resolve, 800));
         } catch (planError) {
-          console.warn(`Error fetching budget for plan ${plan.id}:`, planError);
+          console.warn(`[AdminDashboard] Error fetching budget for plan ${plan.id}:`, {
+            message: planError.message,
+            code: planError.code,
+            timeout: planError.timeout
+          });
           // Set default values if budget fetch fails
           plan.budget_total = 0;
           plan.funded_total = 0;
@@ -268,15 +354,19 @@ const AdminDashboard: React.FC = () => {
         
         // Delay between batches to avoid overwhelming the server
         if (batchIndex < batches.length - 1) {
-          console.log(`Waiting before next batch...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log(`[AdminDashboard] Waiting before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Increased delay for production
         }
       }
       
-      console.log('Completed budget data fetching for all plans');
+      console.log('[AdminDashboard] Completed budget data fetching for all plans');
     } catch (error) {
-      console.error('Error fetching budget data:', error);
-      setBudgetError('Failed to load complete budget data');
+      console.error('[AdminDashboard] Error fetching budget data:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      setBudgetError(`Failed to load budget data: ${error.message || 'Network timeout'}`);
     } finally {
       setIsLoadingBudgets(false);
     }
@@ -286,14 +376,18 @@ const AdminDashboard: React.FC = () => {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setError(null);
+    setBudgetError(null);
     try {
-      console.log('Manual refresh initiated');
+      console.log('[AdminDashboard] Manual refresh initiated');
       await refetchPlans();
       setSuccess('Data refreshed successfully');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
-      console.error('Manual refresh failed:', err);
-      setError('Failed to refresh data');
+      console.error('[AdminDashboard] Manual refresh failed:', {
+        message: err.message,
+        code: err.code
+      });
+      setError(`Failed to refresh data: ${err.message || 'Please check your connection'}`);
       setTimeout(() => setError(null), 5000);
     } finally {
       setIsRefreshing(false);
@@ -466,10 +560,13 @@ const AdminDashboard: React.FC = () => {
         <div className="text-center">
           <Loader className="h-8 w-8 animate-spin mr-2 text-green-600 mx-auto mb-4" />
           <span className="text-lg">Loading admin analytics...</span>
+          <p className="text-sm text-gray-500 mt-2">This may take up to 2 minutes in production</p>
           {isLoadingBudgets && (
-            <p className="text-sm text-gray-500 mt-2">Calculating budget data...</p>
+            <p className="text-sm text-gray-500 mt-1">Calculating budget data...</p>
           )}
-          <p className="text-xs text-gray-400 mt-1">This may take longer in production</p>
+          <div className="mt-4 w-64 bg-gray-200 rounded-full h-2 mx-auto">
+            <div className="bg-green-600 h-2 rounded-full animate-pulse" style={{ width: '45%' }}></div>
+          </div>
         </div>
       </div>
     );
@@ -504,14 +601,20 @@ const AdminDashboard: React.FC = () => {
             <div>
               <h3 className="font-medium">Failed to load plans data</h3>
               <p className="text-sm mt-1">
-                {plansError instanceof Error ? plansError.message : 'Network timeout occurred'}
+                {plansError instanceof Error 
+                  ? `${plansError.message}${plansError.code === 'ECONNABORTED' ? ' (Connection timeout - server may be slow)' : ''}`
+                  : 'Network timeout occurred - please check your connection'}
+              </p>
+              <p className="text-xs text-red-600 mt-1">
+                Try refreshing the page or contact support if this persists
               </p>
               <button
                 onClick={() => refetchPlans()}
                 disabled={isLoadingPlans}
-                className="mt-2 px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 disabled:opacity-50"
+                className="mt-3 px-4 py-2 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 disabled:opacity-50 inline-flex items-center"
               >
-                {isLoadingPlans ? 'Retrying...' : 'Retry Loading'}
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingPlans ? 'animate-spin' : ''}`} />
+                {isLoadingPlans ? 'Retrying...' : 'Retry Loading Plans'}
               </button>
             </div>
           </div>
@@ -519,9 +622,17 @@ const AdminDashboard: React.FC = () => {
       )}
 
       {budgetError && (
-        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center text-amber-700">
-          <AlertCircle className="h-5 w-5 mr-2" />
-          {budgetError}
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex items-center text-amber-700">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <div>
+              <h3 className="font-medium">Budget Calculation Issue</h3>
+              <p className="text-sm mt-1">{budgetError}</p>
+              <p className="text-xs text-amber-600 mt-1">
+                Plan data is available but budget calculations may be incomplete
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

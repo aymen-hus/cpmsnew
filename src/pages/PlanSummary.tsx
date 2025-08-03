@@ -97,11 +97,11 @@ const PlanSummary: React.FC = () => {
   // Function to fetch ALL objectives for the organization
   const fetchSelectedObjectives = async (organizationId: number) => {
     try {
-      console.log(`=== Fetching SELECTED objectives for plan ${planId} ===`);
+      console.log(`[PlanSummary] === Fetching SELECTED objectives for plan ${planId} ===`);
       setIsLoadingComplete(true);
       
       // Step 1: Get only the objectives selected for this plan
-      console.log('Step 1: Identifying selected objectives for this plan...');
+      console.log('[PlanSummary] Step 1: Identifying selected objectives for this plan...');
       
       let selectedObjectiveIds: string[] = [];
       
@@ -109,7 +109,7 @@ const PlanSummary: React.FC = () => {
       if (planData?.strategic_objective) {
         const mainObjId = String(planData.strategic_objective);
         selectedObjectiveIds.push(mainObjId);
-        console.log('Added main strategic objective:', mainObjId);
+        console.log('[PlanSummary] Added main strategic objective:', mainObjId);
       }
       
       // Get ALL additional selected objectives if they exist
@@ -122,14 +122,14 @@ const PlanSummary: React.FC = () => {
           })
           .filter(Boolean); // Remove empty strings
         
-        console.log('Additional selected objective IDs:', additionalIds);
+        console.log('[PlanSummary] Additional selected objective IDs:', additionalIds);
         selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
       } else if (planData?.selected_objectives && typeof planData.selected_objectives === 'object') {
         // Handle case where selected_objectives is a single object
         if (planData.selected_objectives.id || planData.selected_objectives) {
           const objId = String(planData.selected_objectives.id || planData.selected_objectives);
           if (objId) selectedObjectiveIds.push(objId);
-          console.log('Added single selected objective:', objId);
+          console.log('[PlanSummary] Added single selected objective:', objId);
         }
       }
       
@@ -150,8 +150,8 @@ const PlanSummary: React.FC = () => {
       // Remove duplicates
       selectedObjectiveIds = [...new Set(selectedObjectiveIds)].filter(Boolean);
       
-      console.log('🎯 FINAL selected objective IDs for this plan:', selectedObjectiveIds);
-      console.log('📊 Plan data structure for debugging:', {
+      console.log('[PlanSummary] 🎯 FINAL selected objective IDs for this plan:', selectedObjectiveIds);
+      console.log('[PlanSummary] 📊 Plan data structure for debugging:', {
         plan_id: planId,
         strategic_objective: planData?.strategic_objective,
         selected_objectives_type: typeof planData?.selected_objectives,
@@ -161,22 +161,46 @@ const PlanSummary: React.FC = () => {
       });
       
       if (selectedObjectiveIds.length === 0) {
-        console.error('❌ No selected objectives found for this plan');
+        console.error('[PlanSummary] ❌ No selected objectives found for this plan');
         
         // Fallback: if no selected objectives found, try to use the main strategic_objective
         if (planData?.strategic_objective) {
           const fallbackId = String(planData.strategic_objective);
-          console.warn('🔄 Fallback: Using main strategic_objective as selected:', fallbackId);
+          console.warn('[PlanSummary] 🔄 Fallback: Using main strategic_objective as selected:', fallbackId);
           selectedObjectiveIds = [fallbackId];
         } else {
-          console.error('❌ No fallback available, returning empty array');
+          console.error('[PlanSummary] ❌ No fallback available, returning empty array');
           return [];
         }
       }
       
       // Step 2: Fetch only the selected objectives
-      console.log(`Step 2: Fetching ${selectedObjectiveIds.length} selected objectives from system...`);
-      const objectivesResponse = await objectives.getAll();
+      console.log(`[PlanSummary] Step 2: Fetching ${selectedObjectiveIds.length} selected objectives from system...`);
+      
+      // Enhanced objectives fetch with retry logic for production
+      let objectivesResponse;
+      let objectiveRetries = 0;
+      const maxRetries = 3;
+      
+      while (objectiveRetries <= maxRetries) {
+        try {
+          objectivesResponse = await Promise.race([
+            objectives.getAll(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Objectives fetch timeout')), 30000)
+            )
+          ]);
+          break;
+        } catch (objError) {
+          objectiveRetries++;
+          if (objectiveRetries > maxRetries) {
+            throw objError;
+          }
+          console.warn(`[PlanSummary] Objectives fetch retry ${objectiveRetries} for plan ${planId}`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * objectiveRetries));
+        }
+      }
+      
       const allObjectives = objectivesResponse?.data || [];
       
       // Filter to only selected objectives
@@ -184,26 +208,26 @@ const PlanSummary: React.FC = () => {
         {
           const objId = String(obj.id);
           const isSelected = selectedObjectiveIds.includes(objId);
-          if (isSelected) {
+          console.log(`[PlanSummary] ✅ Found selected objective: ${objId} (${obj.title})`);
             console.log(`✅ Found selected objective: ${objId} (${obj.title})`);
           }
           return isSelected;
         }
       );
       
-      console.log(`🎯 PRODUCTION CHECK: Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total objectives`);
+      console.log(`[PlanSummary] 🎯 PRODUCTION CHECK: Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total objectives`);
       
       if (selectedObjectives.length !== selectedObjectiveIds.length) {
-        console.warn('⚠️ MISMATCH: Expected', selectedObjectiveIds.length, 'objectives but found', selectedObjectives.length);
-        console.warn('🔍 Looking for IDs:', selectedObjectiveIds);
-        console.warn('📋 Available objective IDs in system:', allObjectives.slice(0, 10).map(obj => String(obj.id)));
+        console.warn('[PlanSummary] ⚠️ MISMATCH: Expected', selectedObjectiveIds.length, 'objectives but found', selectedObjectives.length);
+        console.warn('[PlanSummary] 🔍 Looking for IDs:', selectedObjectiveIds);
+        console.warn('[PlanSummary] 📋 Available objective IDs in system:', allObjectives.slice(0, 10).map(obj => String(obj.id)));
       }
       
       if (selectedObjectives.length === 0) {
-        console.error('❌ PRODUCTION ERROR: No matching objectives found in system for selected IDs:', selectedObjectiveIds);
-        console.error('📋 Available objective IDs in system (first 20):', allObjectives.slice(0, 20).map(obj => `${obj.id} (${obj.title})`));
-        console.error('🔍 Selected IDs we were looking for:', selectedObjectiveIds);
-        console.error('📊 Data type comparison:', {
+        console.error('[PlanSummary] ❌ PRODUCTION ERROR: No matching objectives found in system for selected IDs:', selectedObjectiveIds);
+        console.error('[PlanSummary] 📋 Available objective IDs in system (first 20):', allObjectives.slice(0, 20).map(obj => `${obj.id} (${obj.title})`));
+        console.error('[PlanSummary] 🔍 Selected IDs we were looking for:', selectedObjectiveIds);
+        console.error('[PlanSummary] 📊 Data type comparison:', {
           selected_sample: selectedObjectiveIds[0],
           available_sample: allObjectives[0]?.id,
           selected_type: typeof selectedObjectiveIds[0],
@@ -213,10 +237,33 @@ const PlanSummary: React.FC = () => {
       }
       
       // Step 3: Get ALL initiatives from the system
-      console.log('Step 3: Fetching ALL initiatives from system...');
-      const initiativesResponse = await initiatives.getAll();
+      console.log('[PlanSummary] Step 3: Fetching ALL initiatives from system...');
+      
+      // Enhanced initiatives fetch with retry logic
+      let initiativesResponse;
+      let initiativeRetries = 0;
+      
+      while (initiativeRetries <= maxRetries) {
+        try {
+          initiativesResponse = await Promise.race([
+            initiatives.getAll(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Initiatives fetch timeout')), 35000)
+            )
+          ]);
+          break;
+        } catch (initError) {
+          initiativeRetries++;
+          if (initiativeRetries > maxRetries) {
+            throw initError;
+          }
+          console.warn(`[PlanSummary] Initiatives fetch retry ${initiativeRetries} for plan ${planId}`);
+          await new Promise(resolve => setTimeout(resolve, 3000 * initiativeRetries));
+        }
+      }
+      
       const allInitiatives = initiativesResponse?.data || [];
-      console.log(`📊 Found ${allInitiatives.length} total initiatives in system`);
+      console.log(`[PlanSummary] 📊 Found ${allInitiatives.length} total initiatives in system`);
       
       // Step 4: Filter initiatives for this organization and selected objectives
       const orgInitiatives = allInitiatives.filter(initiative => 
@@ -232,14 +279,14 @@ const PlanSummary: React.FC = () => {
           
           const shouldInclude = belongsToOrg && belongsToSelectedObjective;
           
-          if (shouldInclude) {
+          console.log(`[PlanSummary] ✅ Including initiative: ${initiative.name} (objective: ${initiative.strategic_objective})`);
             console.log(`✅ Including initiative: ${initiative.name} (objective: ${initiative.strategic_objective})`);
           }
           
           return shouldInclude;
         }
       );
-      console.log(`🎯 PRODUCTION: Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId} and selected objectives`);
+      console.log(`[PlanSummary] 🎯 PRODUCTION: Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId} and selected objectives`);
       
       // Step 5: Group initiatives by objective
       const objectiveInitiativesMap: Record<string, any[]> = {};
@@ -253,40 +300,64 @@ const PlanSummary: React.FC = () => {
         }
       });
       
-      console.log('📊 Initiatives grouped by selected objectives:', Object.keys(objectiveInitiativesMap).length, 'objectives have initiatives');
+      console.log('[PlanSummary] 📊 Initiatives grouped by selected objectives:', Object.keys(objectiveInitiativesMap).length, 'objectives have initiatives');
       
       // Step 6: Process each selected objective
       const enrichedObjectives = [];
       
       for (const objective of selectedObjectives) {
-        console.log(`📋 Processing SELECTED objective: ${objective.id} (${objective.title})`);
+        console.log(`[PlanSummary] 📋 Processing SELECTED objective: ${objective.id} (${objective.title})`);
         
         const objectiveInitiatives = objectiveInitiativesMap[String(objective.id)] || [];
         
-        console.log(`  ├── Found ${objectiveInitiatives.length} initiatives for this SELECTED objective`);
+        console.log(`[PlanSummary]   ├── Found ${objectiveInitiatives.length} initiatives for this SELECTED objective`);
         
         // Process initiatives for this objective
         const enrichedInitiatives = [];
         
         for (const initiative of objectiveInitiatives) {
           try {
-            console.log(`    ├── Processing initiative: ${initiative.id} (${initiative.name})`);
+            console.log(`[PlanSummary]     ├── Processing initiative: ${initiative.id} (${initiative.name})`);
             
-            // Fetch performance measures
-            const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+            // Fetch performance measures with enhanced timeout handling
+            let measuresResponse;
+            try {
+              measuresResponse = await Promise.race([
+                performanceMeasures.getByInitiative(initiative.id),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Measures timeout')), 20000)
+                )
+              ]);
+            } catch (measuresError) {
+              console.warn(`[PlanSummary] Measures fetch timeout for initiative ${initiative.id}, using empty array`);
+              measuresResponse = { data: [] };
+            }
+            
             const allMeasures = measuresResponse?.data || [];
             const filteredMeasures = allMeasures.filter(measure =>
               !measure.organization || measure.organization === organizationId
             );
 
-            // Fetch main activities
-            const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+            // Fetch main activities with enhanced timeout handling
+            let activitiesResponse;
+            try {
+              activitiesResponse = await Promise.race([
+                mainActivities.getByInitiative(initiative.id),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Activities timeout')), 20000)
+                )
+              ]);
+            } catch (activitiesError) {
+              console.warn(`[PlanSummary] Activities fetch timeout for initiative ${initiative.id}, using empty array`);
+              activitiesResponse = { data: [] };
+            }
+            
             const allActivities = activitiesResponse?.data || [];
             const filteredActivities = allActivities.filter(activity =>
               !activity.organization || activity.organization === organizationId
             );
 
-            console.log(`      ├── ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+            console.log(`[PlanSummary]       ├── ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
 
             enrichedInitiatives.push({
               ...initiative,
@@ -294,10 +365,13 @@ const PlanSummary: React.FC = () => {
               main_activities: filteredActivities
             });
             
-            // Small delay to prevent server overload
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // Increased delay for production server protection
+            await new Promise(resolve => setTimeout(resolve, 300));
           } catch (error) {
-            console.error(`    ❌ Error fetching data for initiative ${initiative.id}:`, error);
+            console.error(`[PlanSummary]     ❌ Error fetching data for initiative ${initiative.id}:`, {
+              message: error.message,
+              code: error.code
+            });
             // Add initiative with empty data instead of skipping
             enrichedInitiatives.push({
               ...initiative,
@@ -318,20 +392,24 @@ const PlanSummary: React.FC = () => {
           initiatives: enrichedInitiatives
         });
         
-        console.log(`  ✅ Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
+        console.log(`[PlanSummary]   ✅ Completed objective ${objective.id}: ${enrichedInitiatives.length} enriched initiatives`);
         
-        // Small delay between objectives
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Increased delay between objectives for production
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      console.log(`=== ✅ PRODUCTION FINAL RESULT: ${enrichedObjectives.length} SELECTED objectives processed ===`);
+      console.log(`[PlanSummary] === ✅ PRODUCTION FINAL RESULT: ${enrichedObjectives.length} SELECTED objectives processed ===`);
       const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
-      console.log(`📊 Total initiatives across SELECTED objectives: ${totalInitiatives}`);
-      console.log(`🎯 Selected objective titles:`, enrichedObjectives.map(obj => obj.title));
+      console.log(`[PlanSummary] 📊 Total initiatives across SELECTED objectives: ${totalInitiatives}`);
+      console.log(`[PlanSummary] 🎯 Selected objective titles:`, enrichedObjectives.map(obj => obj.title));
       
       return enrichedObjectives;
     } catch (error) {
-      console.error('❌ PRODUCTION Error in fetchSelectedObjectives:', error);
+      console.error('[PlanSummary] ❌ PRODUCTION Error in fetchSelectedObjectives:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       throw error;
     } finally {
       setIsLoadingComplete(false);
@@ -644,21 +722,25 @@ const PlanSummary: React.FC = () => {
                   <Loader className="h-10 w-10 mx-auto text-green-500 animate-spin" />
                   <p className="mt-4 text-gray-600 text-lg">Loading complete organization data...</p>
                   <p className="mt-2 text-sm text-gray-500">
-                    Fetching all objectives, initiatives, measures, and activities...
+                    Fetching only the objectives selected for this plan...
                   </p>
+                  <div className="mt-4 w-64 bg-gray-200 rounded-full h-2 mx-auto">
+                    <div className="bg-green-600 h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">This may take up to 1 minute in production</p>
                 </div>
               ) : allOrganizationObjectives.length > 0 ? (
                 <div>
                   {/* Data Summary */}
                   <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                     <h3 className="text-sm font-medium text-blue-800 mb-2">Data Summary</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                       <div>
                         <span className="text-blue-600">Organization:</span>
                         <span className="font-medium ml-1">{planData.organization_name}</span>
                       </div>
                       <div>
-                        <span className="text-blue-600">Total Objectives:</span>
+                        <span className="text-blue-600">Selected Objectives:</span>
                         <span className="font-medium ml-1">{allOrganizationObjectives.length}</span>
                       </div>
                       <div>
@@ -667,10 +749,9 @@ const PlanSummary: React.FC = () => {
                           {allOrganizationObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0)}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-blue-600">Organization ID:</span>
-                        <span className="font-medium ml-1">{planData.organization}</span>
-                      </div>
+                    </div>
+                    <div className="mt-3 text-xs text-blue-600">
+                      <p><strong>Note:</strong> This shows only the objectives selected by the planner for this specific plan.</p>
                     </div>
                   </div>
 
@@ -692,16 +773,30 @@ const PlanSummary: React.FC = () => {
               ) : (
                 <div className="p-8 text-center bg-yellow-50 rounded-lg border border-yellow-200">
                   <AlertCircle className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-yellow-800 mb-2">No Complete Data Available</h3>
+                  <h3 className="text-lg font-medium text-yellow-800 mb-2">No Selected Objectives Data</h3>
                   <p className="text-yellow-700 mb-4">
-                    No objectives with complete data found for this organization.
+                    No objectives were found for this plan. This could be due to:
                   </p>
-                  <button
-                    onClick={handleShowCompleteTable}
-                    className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors"
-                  >
-                    Retry Loading Data
-                  </button>
+                  <ul className="text-left text-yellow-700 mb-4 text-sm">
+                    <li>• The planner didn't select any objectives for this plan</li>
+                    <li>• Network timeout while fetching objectives data</li>
+                    <li>• Data synchronization issues between local and production</li>
+                  </ul>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={handleShowCompleteTable}
+                      className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors"
+                    >
+                      Retry Loading Data
+                    </button>
+                    <button
+                      onClick={() => setShowCompleteTable(false)}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  </p>
                 </div>
               )}
             </div>
