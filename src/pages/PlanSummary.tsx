@@ -75,7 +75,7 @@ const PlanSummary: React.FC = () => {
     checkPermissions();
   }, [navigate]);
 
-  // Fetch ALL objectives that are part of this plan
+  // COMPLETELY REWRITTEN: Fetch ALL objectives for the plan
   useEffect(() => {
     const fetchAllPlanObjectives = async () => {
       if (!planData || !userOrgIds.length) return;
@@ -84,26 +84,29 @@ const PlanSummary: React.FC = () => {
         setIsLoadingAllObjectives(true);
         setError(null);
         
-        console.log('=== FETCHING ALL OBJECTIVES FOR PLAN ===');
+        console.log('=== STARTING TO FETCH ALL PLAN OBJECTIVES ===');
         console.log('Plan data:', {
           id: planData.id,
           strategic_objective: planData.strategic_objective,
           selected_objectives: planData.selected_objectives
         });
 
-        // Step 1: Collect ALL objective IDs from the plan
+        // STEP 1: Collect ALL objective IDs from the plan
         const allObjectiveIds = new Set<string>();
 
-        // Add main strategic objective
+        // Add the main strategic objective
         if (planData.strategic_objective) {
           allObjectiveIds.add(String(planData.strategic_objective));
-          console.log('Added main objective ID:', planData.strategic_objective);
+          console.log('Added main strategic objective ID:', planData.strategic_objective);
         }
 
-        // Add ALL selected objectives
+        // Add ALL selected objectives (this is the key part!)
         if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
+          console.log('Selected objectives array:', planData.selected_objectives);
+          
           planData.selected_objectives.forEach(obj => {
-            const objId = typeof obj === 'object' ? obj.id : obj;
+            // Handle both object format {id: X} and direct ID format
+            const objId = typeof obj === 'object' && obj !== null ? obj.id : obj;
             if (objId) {
               allObjectiveIds.add(String(objId));
               console.log('Added selected objective ID:', objId);
@@ -121,12 +124,12 @@ const PlanSummary: React.FC = () => {
           return;
         }
 
-        // Step 2: Fetch complete data for ALL objectives
+        // STEP 2: Fetch complete data for ALL objectives
         console.log('=== FETCHING COMPLETE DATA FOR ALL OBJECTIVES ===');
         const enrichedObjectives = await Promise.all(
           objectiveIdsArray.map(async (objectiveId) => {
             try {
-              console.log(`Processing objective ${objectiveId}`);
+              console.log(`Fetching objective ${objectiveId}`);
 
               // Get objective details
               const objectiveResponse = await api.get(`/strategic-objectives/${objectiveId}/`);
