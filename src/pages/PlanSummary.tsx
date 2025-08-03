@@ -40,6 +40,7 @@ const PlanSummary: React.FC = () => {
   const [processedObjectives, setProcessedObjectives] = useState<any[]>([]);
   const [isLoadingComplete, setIsLoadingComplete] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [allObjectivesData, setAllObjectivesData] = useState<any[]>([]);
 
   // Check if user has evaluator permissions
   useEffect(() => {
@@ -68,164 +69,237 @@ const PlanSummary: React.FC = () => {
     checkPermissions();
   }, [navigate]);
 
-  // Enhanced data fetching function like in PlanPreviewModal
-  const fetchCompleteObjectiveData = async () => {
+  // Enhanced data fetching function - SAME AS PlanReviewTable
+  const fetchCompleteObjectiveData = async (planData: any) => {
     if (!planData) {
       console.log('No plan data available');
       return [];
     }
 
     try {
-      console.log('Fetching complete objective data for plan:', planData.id);
+      console.log('PlanSummary: Fetching complete objective data for plan:', planData.id);
       
-      // Get the main strategic objective from the plan
-      const mainObjectiveId = planData.strategic_objective;
-      if (!mainObjectiveId) {
-        console.log('No strategic objective ID in plan data');
-        return [];
-      }
-
-      // Fetch the main objective with complete data
-      const objectiveResponse = await api.get(`/strategic-objectives/${mainObjectiveId}/`);
-      const objective = objectiveResponse.data;
+      // Step 1: Get ALL objectives for this plan
+      const allObjectives = [];
       
-      if (!objective) {
-        console.log('Failed to fetch main objective');
-        return [];
-      }
-
-      console.log('Fetched main objective:', objective.title);
-
-      // Fetch initiatives for this objective
-      const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${mainObjectiveId}`);
-      const initiatives = initiativesResponse.data?.results || initiativesResponse.data || [];
-      
-      console.log(`Found ${initiatives.length} initiatives for objective ${mainObjectiveId}`);
-
-      // Filter initiatives based on user organization
-      const filteredInitiatives = initiatives.filter(initiative => 
-        initiative.is_default || 
-        !initiative.organization || 
-        userOrgIds.includes(Number(initiative.organization))
-      );
-
-      console.log(`Filtered to ${filteredInitiatives.length} initiatives for user orgs`);
-
-      // For each initiative, fetch performance measures and main activities
-      const enrichedInitiatives = await Promise.all(
-        filteredInitiatives.map(async (initiative) => {
-          try {
-            console.log(`Fetching data for initiative ${initiative.id} (${initiative.name})`);
-            
-            // Fetch performance measures
-            const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
-            const measures = measuresResponse.data?.results || measuresResponse.data || [];
-            
-            // Filter measures by organization
-            const filteredMeasures = measures.filter(measure =>
-              !measure.organization || userOrgIds.includes(Number(measure.organization))
-            );
-
-            // Fetch main activities
-            const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
-            const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
-            
-            // Filter activities by organization
-            const filteredActivities = activities.filter(activity =>
-              !activity.organization || userOrgIds.includes(Number(activity.organization))
-            );
-
-            console.log(`Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
-
-            return {
-              ...initiative,
-              performance_measures: filteredMeasures,
-              main_activities: filteredActivities
-            };
-          } catch (error) {
-            console.error(`Error fetching data for initiative ${initiative.id}:`, error);
-            return {
-              ...initiative,
-              performance_measures: [],
-              main_activities: []
-            };
+      // Get main strategic objective
+      if (planData.strategic_objective) {
+        try {
+          console.log('Fetching main objective:', planData.strategic_objective);
+          const mainObjResponse = await api.get(`/strategic-objectives/${planData.strategic_objective}/`);
+          if (mainObjResponse.data) {
+            allObjectives.push(mainObjResponse.data);
+            console.log('Added main objective:', mainObjResponse.data.title);
           }
-        })
-      );
-
-      // Add any additional selected objectives if they exist
-      const allObjectives = [objective];
+        } catch (error) {
+          console.error('Error fetching main objective:', error);
+        }
+      }
       
-      // Check if plan has additional selected objectives
+      // Get additional selected objectives if they exist
       if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
         console.log('Plan has additional selected objectives:', planData.selected_objectives.length);
         
-        // Fetch each additional objective
         for (const additionalObj of planData.selected_objectives) {
-          if (additionalObj.id === mainObjectiveId) continue; // Skip main objective
+          // Skip if it's the same as main objective
+          if (additionalObj.id === planData.strategic_objective) continue;
           
           try {
             const addObjResponse = await api.get(`/strategic-objectives/${additionalObj.id}/`);
-            const addObjective = addObjResponse.data;
-            
-            // Fetch initiatives for this additional objective
-            const addInitiativesResponse = await api.get(`/strategic-initiatives/?objective=${additionalObj.id}`);
-            const addInitiatives = addInitiativesResponse.data?.results || addInitiativesResponse.data || [];
-            
-            const addFilteredInitiatives = addInitiatives.filter(init => 
-              init.is_default || !init.organization || userOrgIds.includes(Number(init.organization))
-            );
-
-            // Process each additional initiative
-            const addEnrichedInitiatives = await Promise.all(
-              addFilteredInitiatives.map(async (init) => {
-                const [measuresResp, activitiesResp] = await Promise.all([
-                  api.get(`/performance-measures/?initiative=${init.id}`).catch(() => ({ data: [] })),
-                  api.get(`/main-activities/?initiative=${init.id}`).catch(() => ({ data: [] }))
-                ]);
-
-                const measures = measuresResp.data?.results || measuresResp.data || [];
-                const activities = activitiesResp.data?.results || activitiesResp.data || [];
-                
-                return {
-                  ...init,
-                  performance_measures: measures.filter(m => !m.organization || userOrgIds.includes(Number(m.organization))),
-                  main_activities: activities.filter(a => !a.organization || userOrgIds.includes(Number(a.organization)))
-                };
-              })
-            );
-
-            allObjectives.push({
-              ...addObjective,
-              initiatives: addEnrichedInitiatives
-            });
+            if (addObjResponse.data) {
+              allObjectives.push(addObjResponse.data);
+              console.log('Added additional objective:', addObjResponse.data.title);
+            }
           } catch (error) {
             console.error(`Error fetching additional objective ${additionalObj.id}:`, error);
           }
         }
       }
+      
+      if (allObjectives.length === 0) {
+        console.log('No objectives found for plan');
+        return [];
+      }
 
-      // Set effective weight and add initiatives to main objective
-      const processedObjectives = allObjectives.map(obj => {
-        const effectiveWeight = obj.planner_weight !== undefined && obj.planner_weight !== null
-          ? obj.planner_weight
-          : obj.weight;
+      console.log(`Found ${allObjectives.length} objectives to process`);
+      
 
-        return {
-          ...obj,
-          effective_weight: effectiveWeight,
-          initiatives: obj.id === mainObjectiveId ? enrichedInitiatives : (obj.initiatives || [])
-        };
-      });
+      // Step 2: For each objective, fetch complete data (initiatives, measures, activities)
+      const enrichedObjectives = await Promise.all(
+        allObjectives.map(async (objective) => {
+          try {
+            console.log(`Processing objective ${objective.id} (${objective.title})`);
 
-      console.log(`Successfully processed ${processedObjectives.length} objectives with complete data`);
-      return processedObjectives;
+            // Fetch initiatives for this objective
+            const initiativesResponse = await api.get(`/strategic-initiatives/?objective=${objective.id}`);
+            const initiatives = initiativesResponse.data?.results || initiativesResponse.data || [];
+            
+            console.log(`Found ${initiatives.length} initiatives for objective ${objective.id}`);
+
+            // Filter initiatives based on user organization
+            const filteredInitiatives = initiatives.filter(initiative => 
+              initiative.is_default || 
+              !initiative.organization || 
+              userOrgIds.includes(Number(initiative.organization))
+            );
+
+            console.log(`Filtered to ${filteredInitiatives.length} initiatives for user orgs`);
+
+            // For each initiative, fetch performance measures and main activities
+            const enrichedInitiatives = await Promise.all(
+              filteredInitiatives.map(async (initiative) => {
+                try {
+                  console.log(`Fetching data for initiative ${initiative.id} (${initiative.name})`);
+                  
+                  // Fetch performance measures
+                  const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
+                  const measures = measuresResponse.data?.results || measuresResponse.data || [];
+                  
+                  // Filter measures by organization
+                  const filteredMeasures = measures.filter(measure =>
+                    !measure.organization || userOrgIds.includes(Number(measure.organization))
+                  );
+
+                  // Fetch main activities
+                  const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
+                  const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
+                  
+                  // Filter activities by organization
+                  const filteredActivities = activities.filter(activity =>
+                    !activity.organization || userOrgIds.includes(Number(activity.organization))
+                  );
+
+                  console.log(`Initiative ${initiative.id}: ${filteredMeasures.length} measures, ${filteredActivities.length} activities`);
+
+                  return {
+                    ...initiative,
+                    performance_measures: filteredMeasures,
+                    main_activities: filteredActivities
+                  };
+                } catch (error) {
+                  console.error(`Error fetching data for initiative ${initiative.id}:`, error);
+                  return {
+                    ...initiative,
+                    performance_measures: [],
+                    main_activities: []
+                  };
+                }
+              })
+            );
+
+            // Set effective weight and return objective with initiatives
+            const effectiveWeight = objective.planner_weight !== undefined && objective.planner_weight !== null
+              ? objective.planner_weight
+              : objective.weight;
+
+            return {
+              ...objective,
+              effective_weight: effectiveWeight,
+              initiatives: enrichedInitiatives
+            };
+          } catch (error) {
+            console.error(`Error processing objective ${objective.id}:`, error);
+            return {
+              ...objective,
+              effective_weight: objective.weight,
+              initiatives: []
+            };
+          }
+        })
+      );
+
+      console.log(`Successfully processed ${enrichedObjectives.length} objectives with complete data`);
+      return enrichedObjectives;
 
     } catch (error) {
       console.error('Error in fetchCompleteObjectiveData:', error);
       return [];
     }
   };
+
+  // Fetch ALL objectives for the plan when component loads
+  useEffect(() => {
+    const fetchAllObjectives = async () => {
+      if (!planData) return;
+      
+      try {
+        console.log('PlanSummary: Fetching all objectives for plan');
+        
+        // Get all objectives that are part of this plan
+        const objectivesToFetch = [];
+        
+        // Add main objective
+        if (planData.strategic_objective) {
+          objectivesToFetch.push(planData.strategic_objective);
+        }
+        
+        // Add selected objectives
+        if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
+          planData.selected_objectives.forEach(obj => {
+            if (obj.id && obj.id !== planData.strategic_objective) {
+              objectivesToFetch.push(obj.id);
+            }
+          });
+        }
+        
+        console.log('Objectives to fetch:', objectivesToFetch);
+        
+        // Fetch all objectives data
+        const objectivesData = await Promise.all(
+          objectivesToFetch.map(async (objId) => {
+            try {
+              const response = await api.get(`/strategic-objectives/${objId}/`);
+              return response.data;
+            } catch (error) {
+              console.error(`Error fetching objective ${objId}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // Filter out null responses
+        const validObjectives = objectivesData.filter(obj => obj !== null);
+        console.log(`PlanSummary: Got ${validObjectives.length} valid objectives`);
+        
+        setAllObjectivesData(validObjectives);
+      } catch (error) {
+        console.error('Error fetching objectives for plan:', error);
+        setAllObjectivesData([]);
+      }
+    };
+    
+    fetchAllObjectives();
+  }, [planData]);
+
+
+  // Handle showing complete table - SAME AS PlanPreviewModal
+  const handleShowCompleteTable = async () => {
+    if (!planData || !allObjectivesData.length) {
+      setError('Plan data not available or objectives not loaded');
+      return;
+    }
+    
+    try {
+      setShowCompleteTable(true);
+      setIsLoadingComplete(true);
+      setError(null);
+      
+      console.log('PlanSummary: Loading complete table data for', allObjectivesData.length, 'objectives');
+      
+      // Use the SAME logic as PlanReviewTable - fetch complete data for all objectives
+      const objectives = await fetchCompleteObjectiveData(planData);
+      
+      console.log('PlanSummary: Fetched complete data for', objectives.length, 'objectives');
+      setProcessedObjectives(objectives);
+      
+    } catch (error) {
+      console.error('Error loading complete table data:', error);
+      setError('Failed to load complete plan data');
+    } finally {
+      setIsLoadingComplete(false);
+    }
+  };
+
 
   // Fetch plan data
   const { data: planData, isLoading } = useQuery({
@@ -253,34 +327,6 @@ const PlanSummary: React.FC = () => {
       setError(error.response?.data?.detail || 'Failed to submit review');
     }
   });
-
-  // Handle showing complete table - same as planner preview
-  const handleShowCompleteTable = async () => {
-    if (!planData) {
-      setError('Plan data not available');
-      return;
-    }
-    
-    try {
-      setShowCompleteTable(true);
-      setIsLoadingComplete(true);
-      setError(null);
-      
-      console.log('Loading complete table data for plan:', planData.id);
-      
-      // Fetch complete objective data like in planner preview
-      const objectives = await fetchCompleteObjectiveData();
-      
-      console.log('Fetched objectives for table:', objectives.length);
-      setProcessedObjectives(objectives);
-      
-    } catch (error) {
-      console.error('Error loading complete table data:', error);
-      setError('Failed to load plan data');
-    } finally {
-      setIsLoadingComplete(false);
-    }
-  };
 
   // Handle Excel export
   const handleExportToExcel = () => {
@@ -564,7 +610,7 @@ const PlanSummary: React.FC = () => {
                 </div>
               ) : processedObjectives.length > 0 ? (
                 <div>
-                  {/* Use PlanReviewTable with same logic as planner preview */}
+                  {/* Use PlanReviewTable with EXACT SAME logic as planner preview */}
                   <PlanReviewTable
                     objectives={processedObjectives}
                     onSubmit={async () => {}}
@@ -580,23 +626,26 @@ const PlanSummary: React.FC = () => {
                   />
                 </div>
               ) : (
-                <div className="p-8 text-center bg-yellow-50 rounded-lg border border-yellow-200">
-                  <Target className="h-10 w-10 text-yellow-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-yellow-800 mb-2">No Complete Data Available</h3>
-                  <p className="text-yellow-700 mb-4">
-                    Unable to load complete plan data. The plan may not have objectives with complete initiatives, measures, and activities.
+                <div className="p-8 text-center bg-amber-50 rounded-lg border border-amber-200">
+                  <Target className="h-10 w-10 text-amber-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-amber-800 mb-2">No Complete Data Available</h3>
+                  <p className="text-amber-700 mb-4">
+                    {allObjectivesData.length === 0 
+                      ? "No objectives found for this plan. The plan may be incomplete."
+                      : `Found ${allObjectivesData.length} objective(s) but unable to load complete data. The objectives may not have complete initiatives, measures, and activities.`
+                    }
                   </p>
                   <div className="flex gap-2 justify-center">
                     <button
                       onClick={handleShowCompleteTable}
-                      className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors"
+                      className="px-4 py-2 bg-amber-100 text-amber-700 rounded-md hover:bg-amber-200 transition-colors"
                     >
                       <RefreshCw className="h-4 w-4 inline mr-2" />
                       Try Again
                     </button>
                     <button
                       onClick={() => setShowCompleteTable(false)}
-                      className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors"
+                      className="px-4 py-2 bg-amber-100 text-amber-700 rounded-md hover:bg-amber-200 transition-colors"
                     >
                       Close
                     </button>
