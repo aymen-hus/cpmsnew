@@ -167,7 +167,6 @@ const PlanSummary: React.FC = () => {
             console.warn(`Failed to fetch objective ${objectiveId} data:`, e);
           }
         }
-        }
         
         console.log(`Total processed objectives: ${processedPlan.objectives.length}`);
         console.log(`Total budget: ${processedPlan.totalBudget}, Total funding: ${processedPlan.totalFunding}`);
