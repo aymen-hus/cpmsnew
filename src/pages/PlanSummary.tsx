@@ -181,12 +181,14 @@ const PlanSummary: React.FC = () => {
       
       // Filter to only selected objectives
       const selectedObjectives = allObjectives.filter((obj: any) => 
-        const objId = String(obj.id);
-        const isSelected = selectedObjectiveIds.includes(objId);
-        if (isSelected) {
-          console.log(`✅ Found selected objective: ${objId} (${obj.title})`);
+        {
+          const objId = String(obj.id);
+          const isSelected = selectedObjectiveIds.includes(objId);
+          if (isSelected) {
+            console.log(`✅ Found selected objective: ${objId} (${obj.title})`);
+          }
+          return isSelected;
         }
-        return isSelected;
       );
       
       console.log(`🎯 PRODUCTION CHECK: Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total objectives`);
@@ -218,22 +220,24 @@ const PlanSummary: React.FC = () => {
       
       // Step 4: Filter initiatives for this organization and selected objectives
       const orgInitiatives = allInitiatives.filter(initiative => 
-        // Check if initiative belongs to organization
-        const belongsToOrg = initiative.is_default || 
-                           !initiative.organization || 
-                           initiative.organization === organizationId;
-        
-        // Check if initiative belongs to selected objectives
-        const belongsToSelectedObjective = initiative.strategic_objective && 
-          selectedObjectiveIds.includes(String(initiative.strategic_objective));
-        
-        const shouldInclude = belongsToOrg && belongsToSelectedObjective;
-        
-        if (shouldInclude) {
-          console.log(`✅ Including initiative: ${initiative.name} (objective: ${initiative.strategic_objective})`);
+        {
+          // Check if initiative belongs to organization
+          const belongsToOrg = initiative.is_default || 
+                             !initiative.organization || 
+                             initiative.organization === organizationId;
+          
+          // Check if initiative belongs to selected objectives
+          const belongsToSelectedObjective = initiative.strategic_objective && 
+            selectedObjectiveIds.includes(String(initiative.strategic_objective));
+          
+          const shouldInclude = belongsToOrg && belongsToSelectedObjective;
+          
+          if (shouldInclude) {
+            console.log(`✅ Including initiative: ${initiative.name} (objective: ${initiative.strategic_objective})`);
+          }
+          
+          return shouldInclude;
         }
-        
-        return shouldInclude;
       );
       console.log(`🎯 PRODUCTION: Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId} and selected objectives`);
       
