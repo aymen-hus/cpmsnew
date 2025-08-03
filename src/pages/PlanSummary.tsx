@@ -59,14 +59,27 @@ const PlanSummary: React.FC = () => {
           return;
         }
         
-        setIsUserEvaluator(isEvaluator(authData.userOrganizations));
-        setIsUserAdmin(isAdmin(authData.userOrganizations));
+        const userIsAdmin = isAdmin(authData.userOrganizations);
+        const userIsEvaluator = isEvaluator(authData.userOrganizations);
+        
+        setIsUserEvaluator(userIsEvaluator);
+        setIsUserAdmin(userIsAdmin);
+        
+        // For admins, don't restrict by organization - they can view everything
+        if (userIsAdmin) {
+          console.log('👑 Admin user detected - bypassing all organization restrictions');
+          setUserOrgIds([]); // Empty array means no filtering for admins
+          return;
+        }
         
         // Get user's organization IDs
-        if (authData.userOrganizations && authData.userOrganizations.length > 0) {
+        if (!userIsAdmin && authData.userOrganizations && authData.userOrganizations.length > 0) {
           const orgIds = authData.userOrganizations.map(org => org.organization);
           setUserOrgIds(orgIds);
           console.log('User organization IDs:', orgIds);
+        } else if (!userIsAdmin) {
+          // Non-admin with no organizations
+          setError('You do not have access to any organizations');
         }
       } catch (error) {
         console.error('Failed to check permissions:', error);
@@ -202,8 +215,7 @@ const PlanSummary: React.FC = () => {
 
             console.log(`📋 Found ${initiatives.length} initiatives for objective ${objectiveId}`);
 
-            // For admin users, show ALL initiatives regardless of organization
-            // For regular users, filter by organization
+            // ADMIN FIX: Admins see ALL initiatives regardless of organization
             const filteredInitiatives = isUserAdmin ? initiatives : initiatives.filter(initiative => 
               initiative.is_default || !initiative.organization || userOrgIds.includes(initiative.organization)
             );
@@ -221,7 +233,7 @@ const PlanSummary: React.FC = () => {
                 const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
                 const measures = measuresResponse.data?.results || measuresResponse.data || [];
 
-                // For admin users, show ALL measures regardless of organization
+                // ADMIN FIX: Admins see ALL measures regardless of organization
                 const filteredMeasures = isUserAdmin ? measures : measures.filter(measure =>
                   !measure.organization || userOrgIds.includes(measure.organization)
                 );
@@ -230,7 +242,7 @@ const PlanSummary: React.FC = () => {
                 const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
                 const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
 
-                // For admin users, show ALL activities regardless of organization
+                // ADMIN FIX: Admins see ALL activities regardless of organization  
                 const filteredActivities = isUserAdmin ? activities : activities.filter(activity =>
                   !activity.organization || userOrgIds.includes(activity.organization)
                 );
@@ -298,8 +310,10 @@ const PlanSummary: React.FC = () => {
       }
     };
 
-    // Fetch when we have plan data - admins don't need org IDs, regular users do
-    if (planData && (isUserAdmin || userOrgIds.length > 0)) {
+    // ADMIN FIX: Fetch data when we have plan data
+    // - Admins can fetch immediately (don't need org IDs)
+    // - Regular users need org IDs to filter data
+    if (planData && (isUserAdmin || (!isUserAdmin && userOrgIds.length > 0))) {
       fetchAllPlanObjectives();
     }
   }, [planData, isUserAdmin, userOrgIds]);
@@ -423,9 +437,11 @@ const PlanSummary: React.FC = () => {
   }
 
   // Check if user can review this plan (evaluator for the same organization)
-  const canReview = isUserEvaluator && 
-                   userOrgIds.includes(Number(planData.organization)) && 
-                   planData.status === 'SUBMITTED';
+  // ADMIN FIX: Admins can review any plan, evaluators only for same organization
+  const canReview = (isUserAdmin && planData.status === 'SUBMITTED') ||
+                   (isUserEvaluator && 
+                    userOrgIds.includes(Number(planData.organization)) && 
+                    planData.status === 'SUBMITTED');
 
   return (
     <div className="px-4 py-6 sm:px-0">
