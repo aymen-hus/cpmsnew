@@ -36,6 +36,7 @@ const AdminDashboard: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [organizationsMap, setOrganizationsMap] = useState<Record<string, string>>({});
   const [selectedTimeframe, setSelectedTimeframe] = useState<'all' | '30d' | '90d'>('all');
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const [stats, setStats] = useState({
     totalPlans: 0,
     draftPlans: 0,
@@ -59,7 +60,11 @@ const AdminDashboard: React.FC = () => {
           return;
         }
         
-        if (!isAdmin(authData.userOrganizations)) {
+        // Check if user is admin
+        const userIsAdmin = isAdmin(authData.userOrganizations);
+        setIsAdminUser(userIsAdmin);
+        
+        if (!userIsAdmin) {
           setError('You do not have permission to access the admin dashboard');
           return;
         }
