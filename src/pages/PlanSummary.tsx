@@ -65,10 +65,10 @@ const PlanSummary: React.FC = () => {
         setIsUserEvaluator(userIsEvaluator);
         setIsUserAdmin(userIsAdmin);
         
-        // For admins, don't restrict by organization - they can view everything
+        // ADMIN FIX: Admins can view EVERYTHING without any restrictions
         if (userIsAdmin) {
-          console.log('👑 Admin user detected - bypassing all organization restrictions');
-          setUserOrgIds([]); // Empty array means no filtering for admins
+          console.log('👑 ADMIN DETECTED: No restrictions, can view ALL data from ALL organizations');
+          setUserOrgIds([]); // Empty = no filtering for admins
           return;
         }
         
@@ -105,6 +105,7 @@ const PlanSummary: React.FC = () => {
           strategic_objective: planData.strategic_objective,
           selected_objectives: planData.selected_objectives
         });
+        console.log('Admin status:', { isUserAdmin, userOrgIds });
 
         // STEP 1: Collect ALL objective IDs from the plan
         console.log('=== COLLECTING ALL OBJECTIVE IDS FROM PLAN ===');
@@ -215,12 +216,12 @@ const PlanSummary: React.FC = () => {
 
             console.log(`📋 Found ${initiatives.length} initiatives for objective ${objectiveId}`);
 
-            // ADMIN FIX: Admins see ALL initiatives regardless of organization
+            // ADMIN FIX: Admins see ALL initiatives without any filtering
             const filteredInitiatives = isUserAdmin ? initiatives : initiatives.filter(initiative => 
               initiative.is_default || !initiative.organization || userOrgIds.includes(initiative.organization)
             );
 
-            console.log(`✓ Using ${filteredInitiatives.length} initiatives (${isUserAdmin ? 'admin - no filtering' : 'filtered by org'})`);
+            console.log(`✓ Using ${filteredInitiatives.length} initiatives (${isUserAdmin ? 'ADMIN - NO FILTERING' : 'filtered by org'})`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = [];
@@ -233,7 +234,7 @@ const PlanSummary: React.FC = () => {
                 const measuresResponse = await api.get(`/performance-measures/?initiative=${initiative.id}`);
                 const measures = measuresResponse.data?.results || measuresResponse.data || [];
 
-                // ADMIN FIX: Admins see ALL measures regardless of organization
+                // ADMIN FIX: Admins see ALL measures without any filtering
                 const filteredMeasures = isUserAdmin ? measures : measures.filter(measure =>
                   !measure.organization || userOrgIds.includes(measure.organization)
                 );
@@ -242,7 +243,7 @@ const PlanSummary: React.FC = () => {
                 const activitiesResponse = await api.get(`/main-activities/?initiative=${initiative.id}`);
                 const activities = activitiesResponse.data?.results || activitiesResponse.data || [];
 
-                // ADMIN FIX: Admins see ALL activities regardless of organization  
+                // ADMIN FIX: Admins see ALL activities without any filtering
                 const filteredActivities = isUserAdmin ? activities : activities.filter(activity =>
                   !activity.organization || userOrgIds.includes(activity.organization)
                 );
@@ -310,10 +311,8 @@ const PlanSummary: React.FC = () => {
       }
     };
 
-    // ADMIN FIX: Fetch data when we have plan data
-    // - Admins can fetch immediately (don't need org IDs)
-    // - Regular users need org IDs to filter data
-    if (planData && (isUserAdmin || (!isUserAdmin && userOrgIds.length > 0))) {
+    // ADMIN FIX: Admins can fetch data immediately without waiting for org IDs
+    if (planData && (isUserAdmin || userOrgIds.length > 0)) {
       fetchAllPlanObjectives();
     }
   }, [planData, isUserAdmin, userOrgIds]);
@@ -536,6 +535,12 @@ const PlanSummary: React.FC = () => {
                 <CheckCircle className="h-4 w-4 mr-2" />
                 Review Plan
               </button>
+            )}
+            
+            {isUserAdmin && (
+              <div className="bg-blue-50 px-3 py-1 rounded-md border border-blue-200">
+                <span className="text-xs font-medium text-blue-700">👑 ADMIN MODE: Full Access</span>
+              </div>
             )}
           </div>
         </div>
