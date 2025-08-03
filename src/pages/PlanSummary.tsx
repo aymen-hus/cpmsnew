@@ -110,26 +110,43 @@ const PlanSummary: React.FC = () => {
         selectedObjectiveIds.push(planData.strategic_objective.toString());
       }
       
-      // Get additional selected objectives if they exist
+      // Get ALL additional selected objectives if they exist
       if (planData?.selected_objectives && Array.isArray(planData.selected_objectives)) {
         const additionalIds = planData.selected_objectives.map((obj: any) => 
           typeof obj === 'object' ? obj.id?.toString() : obj.toString()
         );
         selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
+      } else if (planData?.selected_objectives && typeof planData.selected_objectives === 'object') {
+        // Handle case where selected_objectives is a single object
+        const objId = planData.selected_objectives.id?.toString() || planData.selected_objectives.toString();
+        selectedObjectiveIds.push(objId);
+      }
+      
+      // Also check if there are selected objectives in the plan data directly
+      if (planData?.objectives && Array.isArray(planData.objectives)) {
+        const directObjectiveIds = planData.objectives.map((obj: any) => 
+          typeof obj === 'object' ? obj.id?.toString() : obj.toString()
+        );
+        selectedObjectiveIds = [...selectedObjectiveIds, ...directObjectiveIds];
       }
       
       // Remove duplicates
       selectedObjectiveIds = [...new Set(selectedObjectiveIds)].filter(Boolean);
       
-      console.log('Selected objective IDs for this plan:', selectedObjectiveIds);
+      console.log('ALL selected objective IDs for this plan:', selectedObjectiveIds);
       
       if (selectedObjectiveIds.length === 0) {
         console.warn('No selected objectives found for this plan');
+        console.warn('Plan data structure:', {
+          strategic_objective: planData?.strategic_objective,
+          selected_objectives: planData?.selected_objectives,
+          objectives: planData?.objectives
+        });
         return [];
       }
       
       // Step 2: Fetch only the selected objectives
-      console.log('Step 2: Fetching selected objectives from system...');
+      console.log(`Step 2: Fetching ${selectedObjectiveIds.length} selected objectives from system...`);
       const objectivesResponse = await objectives.getAll();
       const allObjectives = objectivesResponse?.data || [];
       
@@ -138,7 +155,13 @@ const PlanSummary: React.FC = () => {
         selectedObjectiveIds.includes(obj.id?.toString())
       );
       
-      console.log(`Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total`);
+      console.log(`Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total objectives`);
+      
+      if (selectedObjectives.length === 0) {
+        console.error('No matching objectives found in system for selected IDs:', selectedObjectiveIds);
+        console.error('Available objective IDs in system:', allObjectives.map(obj => obj.id));
+        return [];
+      }
       
       // Step 3: Get ALL initiatives from the system
       console.log('Step 3: Fetching ALL initiatives from system...');
