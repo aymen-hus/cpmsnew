@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { 
   BarChart3, 
   PieChart, 
@@ -13,7 +13,7 @@ import {
   CheckCircle, 
   Clock, 
   RefreshCw,
-  Eye,
+  Eye, 
   Download,
   Calendar
 } from 'lucide-react';
@@ -400,6 +400,10 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Handle view plan navigation
+  const handleViewPlan = (planId: string) => {
+    navigate(`/plans/${planId}`);
+  };
   // Loading state
   if (isLoading) {
     return (
@@ -709,6 +713,9 @@ const AdminDashboard: React.FC = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Created
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -735,6 +742,15 @@ const AdminDashboard: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatDateSafe(plan.created_at)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => handleViewPlan(plan.id)}
+                        className="text-blue-600 hover:text-blue-900 flex items-center"
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        View
+                      </button>
                     </td>
                   </tr>
                 ))}
