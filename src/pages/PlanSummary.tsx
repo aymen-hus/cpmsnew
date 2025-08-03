@@ -42,6 +42,13 @@ const PlanSummary: React.FC = () => {
   const [exportError, setExportError] = useState<string | null>(null);
   const [allObjectivesData, setAllObjectivesData] = useState<any[]>([]);
 
+  // Fetch plan data FIRST before using it anywhere
+  const { data: planData, isLoading } = useQuery({
+    queryKey: ['plan', planId],
+    queryFn: () => plans.getById(planId!),
+    enabled: !!planId,
+  });
+
   // Check if user has evaluator permissions
   useEffect(() => {
     const checkPermissions = async () => {
@@ -301,12 +308,6 @@ const PlanSummary: React.FC = () => {
   };
 
 
-  // Fetch plan data
-  const { data: planData, isLoading } = useQuery({
-    queryKey: ['plan', planId],
-    queryFn: () => plans.getById(planId!),
-    enabled: !!planId,
-  });
 
   // Review mutation
   const reviewMutation = useMutation({
