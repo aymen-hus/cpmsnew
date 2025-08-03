@@ -263,7 +263,6 @@ const AdminDashboard: React.FC = () => {
       approvedPlans: 0,
       rejectedPlans: 0,
       eligiblePlansForBudget: 0,
-      eligiblePlansForBudget: 0,
       totalBudget: 0,
       fundedBudget: 0,
       fundingGap: 0,

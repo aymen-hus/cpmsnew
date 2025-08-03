@@ -95,32 +95,69 @@ const PlanSummary: React.FC = () => {
   });
 
   // Function to fetch ALL objectives for the organization
-  const fetchAllOrganizationObjectives = async (organizationId: number) => {
+  const fetchSelectedObjectives = async (organizationId: number) => {
     try {
-      console.log(`=== Fetching ALL objectives for organization ${organizationId} ===`);
+      console.log(`=== Fetching SELECTED objectives for plan ${planId} ===`);
       setIsLoadingComplete(true);
       
-      // Step 1: Get ALL objectives from the system
-      console.log('Step 1: Fetching ALL objectives from system...');
+      // Step 1: Get only the objectives selected for this plan
+      console.log('Step 1: Identifying selected objectives for this plan...');
+      
+      let selectedObjectiveIds: string[] = [];
+      
+      // Get the main strategic objective
+      if (planData?.strategic_objective) {
+        selectedObjectiveIds.push(planData.strategic_objective.toString());
+      }
+      
+      // Get additional selected objectives if they exist
+      if (planData?.selected_objectives && Array.isArray(planData.selected_objectives)) {
+        const additionalIds = planData.selected_objectives.map((obj: any) => 
+          typeof obj === 'object' ? obj.id?.toString() : obj.toString()
+        );
+        selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
+      }
+      
+      // Remove duplicates
+      selectedObjectiveIds = [...new Set(selectedObjectiveIds)].filter(Boolean);
+      
+      console.log('Selected objective IDs for this plan:', selectedObjectiveIds);
+      
+      if (selectedObjectiveIds.length === 0) {
+        console.warn('No selected objectives found for this plan');
+        return [];
+      }
+      
+      // Step 2: Fetch only the selected objectives
+      console.log('Step 2: Fetching selected objectives from system...');
       const objectivesResponse = await objectives.getAll();
       const allObjectives = objectivesResponse?.data || [];
-      console.log(`Found ${allObjectives.length} total objectives in system`);
       
-      // Step 2: Get ALL initiatives from the system
-      console.log('Step 2: Fetching ALL initiatives from system...');
+      // Filter to only selected objectives
+      const selectedObjectives = allObjectives.filter((obj: any) => 
+        selectedObjectiveIds.includes(obj.id?.toString())
+      );
+      
+      console.log(`Found ${selectedObjectives.length} selected objectives out of ${allObjectives.length} total`);
+      
+      // Step 3: Get ALL initiatives from the system
+      console.log('Step 3: Fetching ALL initiatives from system...');
       const initiativesResponse = await initiatives.getAll();
       const allInitiatives = initiativesResponse?.data || [];
       console.log(`Found ${allInitiatives.length} total initiatives in system`);
       
-      // Step 3: Filter initiatives for this organization
+      // Step 4: Filter initiatives for this organization and selected objectives
       const orgInitiatives = allInitiatives.filter(initiative => 
-        initiative.is_default || 
-        !initiative.organization || 
-        initiative.organization === organizationId
+        (initiative.is_default || 
+         !initiative.organization || 
+         initiative.organization === organizationId) &&
+        // Only include initiatives that belong to selected objectives
+        (initiative.strategic_objective && 
+         selectedObjectiveIds.includes(initiative.strategic_objective.toString()))
       );
       console.log(`Filtered to ${orgInitiatives.length} initiatives for organization ${organizationId}`);
       
-      // Step 4: Group initiatives by objective
+      // Step 5: Group initiatives by objective
       const objectiveInitiativesMap: Record<string, any[]> = {};
       orgInitiatives.forEach(initiative => {
         const objectiveId = initiative.strategic_objective;
@@ -134,15 +171,15 @@ const PlanSummary: React.FC = () => {
       
       console.log('Initiatives grouped by objective:', Object.keys(objectiveInitiativesMap).length, 'objectives have initiatives');
       
-      // Step 5: Process each objective that has initiatives for this organization
+      // Step 6: Process each selected objective
       const enrichedObjectives = [];
       
-      for (const objective of allObjectives) {
+      for (const objective of selectedObjectives) {
         const objectiveInitiatives = objectiveInitiativesMap[objective.id] || [];
         
         console.log(`Processing objective ${objective.id} (${objective.title}) with ${objectiveInitiatives.length} initiatives`);
         
-        // Always include objectives, even if they have no initiatives
+        // Process initiatives for this objective
         const enrichedInitiatives = [];
         
         for (const initiative of objectiveInitiatives) {
@@ -203,11 +240,11 @@ const PlanSummary: React.FC = () => {
       
       console.log(`=== FINAL RESULT: ${enrichedObjectives.length} objectives processed ===`);
       const totalInitiatives = enrichedObjectives.reduce((sum, obj) => sum + (obj.initiatives?.length || 0), 0);
-      console.log(`Total initiatives across all objectives: ${totalInitiatives}`);
+      console.log(`Total initiatives across selected objectives: ${totalInitiatives}`);
       
       return enrichedObjectives;
     } catch (error) {
-      console.error('Error in fetchAllOrganizationObjectives:', error);
+      console.error('Error in fetchSelectedObjectives:', error);
       throw error;
     } finally {
       setIsLoadingComplete(false);
@@ -225,11 +262,11 @@ const PlanSummary: React.FC = () => {
       setShowCompleteTable(true);
       setError(null);
       
-      const completeObjectives = await fetchAllOrganizationObjectives(Number(planData.organization));
+      const completeObjectives = await fetchSelectedObjectives(Number(planData.organization));
       setAllOrganizationObjectives(completeObjectives);
     } catch (error) {
       console.error('Error fetching complete data:', error);
-      setError('Failed to load complete organization data');
+      setError('Failed to load selected objectives data');
     }
   };
 
