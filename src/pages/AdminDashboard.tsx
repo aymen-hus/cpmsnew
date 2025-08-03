@@ -32,7 +32,7 @@ const AdminDashboard: React.FC = () => {
     totalGap: 0,
     orgBudgets: {}
   });
-  const [isLoadingBudgets, setIsLoadingBudgets] = useState(false);</parameter>
+  const [isLoadingBudgets, setIsLoadingBudgets] = useState(false);
 
   // Check if user has admin permissions
   useEffect(() => {
@@ -180,7 +180,12 @@ const AdminDashboard: React.FC = () => {
             
             // Initialize org budget if not exists
             if (!orgBudgets[orgName]) {
-              orgBudgets[orgName] = { total: 0, funded: 0, gap: 0, planCount: 0 };
+              orgBudgets[orgName] = { 
+                total: 0, 
+                funded: 0, 
+                gap: 0, 
+                planCount: 0 
+              };
             }
             orgBudgets[orgName].planCount++;
             
@@ -263,7 +268,8 @@ const AdminDashboard: React.FC = () => {
     } finally {
       setIsLoadingBudgets(false);
     }
-  };</parameter>
+  };
+
   // Manual refresh function
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -593,7 +599,8 @@ const AdminDashboard: React.FC = () => {
             {isLoadingBudgets ? 'Calculating...' : 'Budget coverage'}
           </p>
         </div>
-      </div></parameter>
+      </div>
+
       {/* Tab Navigation */}
       <div className="mb-6 border-b border-gray-200">
         <nav className="flex -mb-px">
@@ -866,7 +873,7 @@ const AdminDashboard: React.FC = () => {
                       y: {
                         title: {
                           display: true,
-                  `$${(stats.fundedBudget / 1000000).toFixed(1)}M`
+                          text: 'Number of Plans'
                         },
                         ticks: {
                           stepSize: 1
@@ -883,7 +890,7 @@ const AdminDashboard: React.FC = () => {
                             let label = context.dataset.label || '';
                             if (label) {
                               label += ': ';
-                  `$${(stats.fundingGap / 1000000).toFixed(1)}M`
+                            }
                             if (context.parsed.y !== null) {
                               label += context.parsed.y + ' plans';
                             }
@@ -900,10 +907,10 @@ const AdminDashboard: React.FC = () => {
                   <button
                     onClick={handleRefresh}
                     className="ml-4 px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200"
-                  `${stats.totalBudget > 0 ? Math.round((stats.fundedBudget / stats.totalBudget) * 100) : 0}%`
+                  >
                     Reload Data
                   </button>
-                  `$${(stats.totalBudget / 1000000).toFixed(1)}M`
+                </div>
                 )}
               </div>
             )}
