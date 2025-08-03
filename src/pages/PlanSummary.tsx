@@ -87,38 +87,45 @@ const PlanSummary: React.FC = () => {
         });
 
         // Step 1: Collect ALL objective IDs from the plan
-        const allObjectiveIds = [];
+        const allObjectiveIds = new Set();
 
         // Add main strategic objective if exists
         if (planData.strategic_objective) {
-          allObjectiveIds.push(planData.strategic_objective);
+          allObjectiveIds.add(planData.strategic_objective);
           console.log('PlanSummary: Added main objective ID:', planData.strategic_objective);
         }
 
-        // Add selected objectives if they exist
-        if (planData.selected_objectives && Array.isArray(planData.selected_objectives)) {
-          planData.selected_objectives.forEach(selectedObj => {
-            // Handle both object and ID formats
-            const objId = typeof selectedObj === 'object' ? selectedObj.id : selectedObj;
-            if (objId && !allObjectiveIds.includes(objId)) {
-              allObjectiveIds.push(objId);
-              console.log('PlanSummary: Added selected objective ID:', objId);
-            }
-          });
+        // Add ALL selected objectives if they exist
+        if (planData.selected_objectives) {
+          if (Array.isArray(planData.selected_objectives)) {
+            planData.selected_objectives.forEach(selectedObj => {
+              // Handle both object and ID formats
+              const objId = typeof selectedObj === 'object' ? selectedObj.id : selectedObj;
+              if (objId) {
+                allObjectiveIds.add(objId);
+                console.log('PlanSummary: Added selected objective ID:', objId);
+              }
+            });
+          } else {
+            console.log('PlanSummary: selected_objectives is not an array:', typeof planData.selected_objectives);
+          }
         }
 
-        console.log('PlanSummary: Total objective IDs to fetch:', allObjectiveIds);
+        // Convert Set to Array for processing
+        const objectiveIdsArray = Array.from(allObjectiveIds);
 
-        if (allObjectiveIds.length === 0) {
+        console.log('PlanSummary: Total objective IDs to fetch:', objectiveIdsArray.length, objectiveIdsArray);
+
+        if (objectiveIdsArray.length === 0) {
           console.warn('PlanSummary: No objectives found in plan');
           setProcessedObjectives([]);
           return;
         }
 
         // Step 2: Fetch complete data for ALL objectives
-        console.log('PlanSummary: Fetching complete data for', allObjectiveIds.length, 'objectives');
+        console.log('PlanSummary: Fetching complete data for', objectiveIdsArray.length, 'objectives');
         const allEnrichedObjectives = await Promise.all(
-          allObjectiveIds.map(async (objectiveId) => {
+          objectiveIdsArray.map(async (objectiveId) => {
             try {
               console.log(`PlanSummary: Processing objective ${objectiveId}`);
 
@@ -212,7 +219,12 @@ const PlanSummary: React.FC = () => {
 
         // Filter out null objectives
         const validEnrichedObjectives = allEnrichedObjectives.filter(obj => obj !== null);
-        console.log(`PlanSummary: Successfully processed ${validEnrichedObjectives.length} objectives with complete data`);
+        console.log(`PlanSummary: Successfully processed ${validEnrichedObjectives.length} out of ${objectiveIdsArray.length} objectives with complete data`);
+        
+        // Log each processed objective for verification
+        validEnrichedObjectives.forEach((obj, index) => {
+          console.log(`PlanSummary: Objective ${index + 1}: ${obj.title} (ID: ${obj.id}) with ${obj.initiatives?.length || 0} initiatives`);
+        });
 
         // Set the processed objectives for display
         setProcessedObjectives(validEnrichedObjectives);
@@ -224,7 +236,7 @@ const PlanSummary: React.FC = () => {
     };
 
     // Only fetch when we have plan data and user org IDs
-    if (userOrgIds.length > 0) {
+    if (planData && userOrgIds.length > 0) {
       fetchAllPlanObjectives();
     }
   }, [planData, userOrgIds]);
