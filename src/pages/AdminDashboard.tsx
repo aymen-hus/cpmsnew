@@ -38,6 +38,13 @@ const AdminDashboard: React.FC = () => {
     totalOther: 0,
     orgBudgets: {}
   });
+  const [budgetStats, setBudgetStats] = useState({
+    totalBudget: 0,
+    fundedBudget: 0,
+    fundingGap: 0,
+    fundingRate: 0,
+    orgBudgets: {} as Record<string, any>
+  });
 
   // Check if user has admin permissions
   useEffect(() => {
@@ -329,6 +336,73 @@ const AdminDashboard: React.FC = () => {
     cacheTime: 300000 // 5 minutes
   });
 
+  // Calculate comprehensive statistics - moved after allPlansData definition
+  const calculateStats = () => {
+    if (!allPlansData || !Array.isArray(allPlansData)) {
+      return {
+        totalPlans: 0,
+        draftPlans: 0,
+        submittedPlans: 0,
+        approvedPlans: 0,
+        rejectedPlans: 0,
+        orgStats: {},
+        monthlyTrends: {}
+      };
+    }
+
+    const stats = {
+      totalPlans: allPlansData.length,
+      draftPlans: 0,
+      submittedPlans: 0,
+      approvedPlans: 0,
+      rejectedPlans: 0,
+      orgStats: {} as Record<string, any>,
+      monthlyTrends: {} as Record<string, number>
+    };
+
+    // Organization-wise statistics
+    const orgStatsMap: Record<string, { planCount: number, approved: number, rejected: number, submitted: number, draft: number }> = {};
+
+    allPlansData.forEach(plan => {
+      // Count by status
+      switch (plan.status) {
+        case 'DRAFT': stats.draftPlans++; break;
+        case 'SUBMITTED': stats.submittedPlans++; break;
+        case 'APPROVED': stats.approvedPlans++; break;
+        case 'REJECTED': stats.rejectedPlans++; break;
+      }
+
+      // Monthly submission trends
+      if (plan.submitted_at) {
+        const month = format(new Date(plan.submitted_at), 'MMM yyyy');
+        stats.monthlyTrends[month] = (stats.monthlyTrends[month] || 0) + 1;
+      }
+
+      // Organization statistics
+      const orgName = plan.organizationName || 
+        organizationsMap[plan.organization] || 
+        `Organization ${plan.organization}`;
+
+      if (!orgStatsMap[orgName]) {
+        orgStatsMap[orgName] = { planCount: 0, approved: 0, rejected: 0, submitted: 0, draft: 0 };
+      }
+      
+      orgStatsMap[orgName].planCount++;
+      
+      switch (plan.status) {
+        case 'DRAFT': orgStatsMap[orgName].draft++; break;
+        case 'SUBMITTED': orgStatsMap[orgName].submitted++; break;
+        case 'APPROVED': orgStatsMap[orgName].approved++; break;
+        case 'REJECTED': orgStatsMap[orgName].rejected++; break;
+      }
+    });
+
+    stats.orgStats = orgStatsMap;
+    return stats;
+  };
+
+  const stats = calculateStats();
+
   // Real budget calculation function that fetches actual budget data
   const calculatePlanBudgets = async (eligiblePlans: any[]) => {
     if (isLoadingBudgets || eligiblePlans.length === 0) return;
@@ -525,82 +599,6 @@ const AdminDashboard: React.FC = () => {
       setIsRefreshing(false);
     }
   };
-
-  // Calculate statistics (simplified - no budget calculation for now)
-  const calculateStats = () => {
-    if (!allPlansData || !Array.isArray(allPlansData)) {
-      return {
-        totalPlans: 0,
-        draftPlans: 0,
-        submittedPlans: 0,
-        approvedPlans: 0,
-        rejectedPlans: 0,
-        orgStats: {},
-        monthlyTrends: {}
-      };
-    }
-
-    const stats = {
-      totalPlans: allPlansData.length,
-      draftPlans: 0,
-      submittedPlans: 0,
-      approvedPlans: 0,
-      rejectedPlans: 0,
-      orgStats: {} as Record<string, any>,
-      monthlyTrends: {} as Record<string, number>
-    };
-
-    // Organization-wise statistics (simplified)
-    const orgStatsMap: Record<string, { planCount: number, approvedCount: number, submittedCount: number, rejectedCount: number, draftCount: number }> = {};
-
-    allPlansData.forEach(plan => {
-      // Count by status
-      switch (plan.status) {
-        case 'DRAFT': stats.draftPlans++; break;
-        case 'SUBMITTED': stats.submittedPlans++; break;
-        case 'APPROVED': stats.approvedPlans++; break;
-        case 'REJECTED': stats.rejectedPlans++; break;
-      }
-
-      // Monthly submission trends
-      if (plan.submitted_at) {
-        const month = format(new Date(plan.submitted_at), 'MMM yyyy');
-        stats.monthlyTrends[month] = (stats.monthlyTrends[month] || 0) + 1;
-      }
-
-      // Organization statistics
-      const orgName = plan.organization_name || 
-        organizationsMap[plan.organization] || 
-        `Organization ${plan.organization}`;
-
-      if (!orgStatsMap[orgName]) {
-        orgStatsMap[orgName] = { 
-          planCount: 0, 
-          approvedCount: 0, 
-          submittedCount: 0, 
-          rejectedCount: 0, 
-          draftCount: 0 
-        };
-      }
-      
-      orgStatsMap[orgName].planCount++;
-      
-      // Count by status per organization
-      switch (plan.status) {
-        case 'DRAFT': orgStatsMap[orgName].draftCount++; break;
-        case 'SUBMITTED': orgStatsMap[orgName].submittedCount++; break;
-        case 'APPROVED': orgStatsMap[orgName].approvedCount++; break;
-        case 'REJECTED': orgStatsMap[orgName].rejectedCount++; break;
-      }
-    });
-
-    stats.orgStats = orgStatsMap;
-    console.log('[AdminDashboard] Stats calculated for', Object.keys(orgStatsMap).length, 'organizations');
-    
-    return stats;
-  };
-
-  const stats = calculateStats();
 
   // Prepare chart data
   const statusChartData = {
