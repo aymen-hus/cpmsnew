@@ -21,13 +21,23 @@ const AdminDashboard: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [organizationsMap, setOrganizationsMap] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<'overview' | 'budget-analysis' | 'organizations'>('overview');
-  const [budgetData, setBudgetData] = useState<any>({
+  const [dashboardBudgetData, setDashboardBudgetData] = useState<any>({
     totalBudget: 0,
     totalFunded: 0,
     totalGap: 0,
     orgBudgets: {}
   });
   const [isLoadingBudgets, setIsLoadingBudgets] = useState(false);
+  const [budgetData, setBudgetData] = useState<any>({
+    totalBudget: 0,
+    totalFunded: 0,
+    totalGap: 0,
+    totalGovernment: 0,
+    totalSDG: 0,
+    totalPartners: 0,
+    totalOther: 0,
+    orgBudgets: {}
+  });
 
   // Check if user has admin permissions
   useEffect(() => {
@@ -292,8 +302,8 @@ const AdminDashboard: React.FC = () => {
         );
         
         if (eligiblePlans.length > 0) {
-          // Calculate budgets immediately for dashboard display
-          calculatePlanBudgets(eligiblePlans);
+          // Don't await - let it run in background
+          calculateBudgetsOptimized(eligiblePlans);
         }
         
         return plans;
@@ -319,28 +329,20 @@ const AdminDashboard: React.FC = () => {
     cacheTime: 300000 // 5 minutes
   });
 
-  // Real budget calculation function that fetches actual budget data
-  const calculatePlanBudgets = async (eligiblePlans: any[]) => {
+  // Optimized budget calculation function
+  const calculateBudgetsOptimized = async (eligiblePlans: any[]) => {
     if (isLoadingBudgets || eligiblePlans.length === 0) return;
     
     setIsLoadingBudgets(true);
-    console.log(`[AdminDashboard] Starting budget calculation for ${eligiblePlans.length} eligible plans`);
+    console.log(`[AdminDashboard] Starting optimized budget calculation for ${eligiblePlans.length} plans`);
     
     try {
       let totalBudget = 0;
       let totalFunded = 0;
-      const orgBudgets: Record<string, { 
-        total: number; 
-        funded: number; 
-        gap: number; 
-        planCount: number;
-        government: number;
-        sdg: number;
-        partners: number;
-      }> = {};
+      const orgBudgets: Record<string, { total: number; funded: number; gap: number; planCount: number }> = {};
       
-      // Process plans in small batches to avoid server overload
-      const batchSize = 2;
+      // Process plans in smaller batches for production
+      const batchSize = 3;
       const batches = [];
       for (let i = 0; i < eligiblePlans.length; i += batchSize) {
         batches.push(eligiblePlans.slice(i, i + batchSize));
@@ -350,115 +352,82 @@ const AdminDashboard: React.FC = () => {
         const batch = batches[batchIndex];
         console.log(`[AdminDashboard] Processing budget batch ${batchIndex + 1}/${batches.length}`);
         
-        // Process each plan in the batch
+        // Process batch with timeout protection
         await Promise.all(batch.map(async (plan) => {
           try {
             const orgName = plan.organization_name || `Organization ${plan.organization}`;
             
-            // Initialize organization budget tracking if not exists
+            // Initialize org budget if not exists
             if (!orgBudgets[orgName]) {
-              orgBudgets[orgName] = {
+              orgBudgets[orgName] = { 
                 total: 0, 
                 funded: 0, 
                 gap: 0, 
-                planCount: 0,
-                government: 0,
-                sdg: 0,
-                partners: 0
+                planCount: 0 
               };
             }
             orgBudgets[orgName].planCount++;
             
-            // Fetch activities for this plan's organization with timeout protection
+            // Simplified budget calculation - only fetch activities with budgets
             try {
-              console.log(`[AdminDashboard] Fetching activities for plan ${plan.id} (org: ${orgName})`);
-              
-              const activitiesResponse = await api.get(`/main-activities/?organization=${plan.organization}`, {
-                timeout: 12000,
-                headers: { 'Accept': 'application/json' }
-              });
+              const activitiesResponse = await Promise.race([
+                api.get(`/main-activities/?organization=${plan.organization}`, {
+                  timeout: 15000,
+                  headers: { 'Accept': 'application/json' }
+                }),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Activities timeout')), 20000)
+                )
+              ]);
               
               const activities = activitiesResponse?.data?.results || activitiesResponse?.data || [];
-              console.log(`[AdminDashboard] Found ${activities.length} activities for org ${orgName}`);
               
+              // Calculate budget from activities with budget data
               let planBudget = 0;
-              let planGovernment = 0;
-              let planSDG = 0;
-              let planPartners = 0;
               let planFunded = 0;
               
-              // Process activities to calculate budget
               for (const activity of activities) {
-                try {
-                  // Get budget for this activity
-                  const budgetResponse = await api.get(`/activity-budgets/?activity=${activity.id}`, {
-                    timeout: 8000,
-                    headers: { 'Accept': 'application/json' }
-                  });
+                if (activity.budget) {
+                  const budget = activity.budget;
+                  const requiredCost = budget.budget_calculation_type === 'WITH_TOOL' 
+                    ? Number(budget.estimated_cost_with_tool || 0)
+                    : Number(budget.estimated_cost_without_tool || 0);
                   
-                  const budgets = budgetResponse?.data?.results || budgetResponse?.data || [];
+                  const fundedAmount = Number(budget.government_treasury || 0) +
+                                    Number(budget.sdg_funding || 0) +
+                                    Number(budget.partners_funding || 0) +
+                                    Number(budget.other_funding || 0);
                   
-                  if (budgets.length > 0) {
-                    const budget = budgets[0]; // Get the first (should be only) budget
-                    
-                    // Calculate required budget (use the calculation type the plan specifies)
-                    const requiredBudget = budget.budget_calculation_type === 'WITH_TOOL' 
-                      ? Number(budget.estimated_cost_with_tool || 0)
-                      : Number(budget.estimated_cost_without_tool || 0);
-                    
-                    // Get funding amounts
-                    const government = Number(budget.government_treasury || 0);
-                    const sdg = Number(budget.sdg_funding || 0);
-                    const partners = Number(budget.partners_funding || 0);
-                    const other = Number(budget.other_funding || 0);
-                    const totalActivityFunding = government + sdg + partners + other;
-                    
-                    // Add to plan totals
-                    planBudget += requiredBudget;
-                    planGovernment += government;
-                    planSDG += sdg;
-                    planPartners += partners;
-                    planFunded += totalActivityFunding;
-                    
-                    console.log(`[AdminDashboard] Activity ${activity.id}: Budget=${requiredBudget}, Funded=${totalActivityFunding}`);
-                  }
-                } catch (budgetError) {
-                  console.warn(`[AdminDashboard] Budget fetch failed for activity ${activity.id}:`, budgetError.message);
-                  // Continue with other activities
+                  planBudget += requiredCost;
+                  planFunded += fundedAmount;
                 }
               }
               
-              // Add plan totals to organization and grand totals
+              // Update totals
               totalBudget += planBudget;
               totalFunded += planFunded;
               orgBudgets[orgName].total += planBudget;
               orgBudgets[orgName].funded += planFunded;
-              orgBudgets[orgName].government += planGovernment;
-              orgBudgets[orgName].sdg += planSDG;
-              orgBudgets[orgName].partners += planPartners;
-              orgBudgets[orgName].gap = Math.max(0, orgBudgets[orgName].total - orgBudgets[orgName].funded);
+              orgBudgets[orgName].gap += Math.max(0, planBudget - planFunded);
               
-              console.log(`[AdminDashboard] Plan ${plan.id} totals: Budget=${planBudget}, Funded=${planFunded}`);
-              
-            } catch (activitiesError) {
-              console.warn(`[AdminDashboard] Activities fetch failed for plan ${plan.id}:`, activitiesError.message);
-              // Continue with other plans
+            } catch (activityError) {
+              console.warn(`[AdminDashboard] Budget calculation timeout for plan ${plan.id}`);
+              // Continue without budget data for this plan
             }
             
           } catch (planError) {
-            console.warn(`[AdminDashboard] Error processing plan ${plan.id}:`, planError.message);
+            console.warn(`[AdminDashboard] Error processing plan ${plan.id}:`, planError);
           }
         }));
         
-        // Small delay between batches to prevent server overload
+        // Small delay between batches
         if (batchIndex < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       
       const totalGap = Math.max(0, totalBudget - totalFunded);
       
-      // Update state with calculated budget data
       setBudgetData({
         totalBudget,
         totalFunded,
@@ -475,19 +444,12 @@ const AdminDashboard: React.FC = () => {
       
     } catch (error) {
       console.error('[AdminDashboard] Budget calculation error:', error);
-      // Set default values on error
-      setBudgetData({
-        totalBudget: 0,
-        totalFunded: 0,
-        totalGap: 0,
-        orgBudgets: {}
-      });
     } finally {
       setIsLoadingBudgets(false);
     }
   };
 
-  // Enhanced refresh function that also refreshes budget data
+  // Manual refresh function
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setError(null);
@@ -501,7 +463,7 @@ const AdminDashboard: React.FC = () => {
           plan.status === 'SUBMITTED' || plan.status === 'APPROVED'
         );
         if (eligiblePlans.length > 0) {
-          calculatePlanBudgets(eligiblePlans);
+          calculateBudgetsOptimized(eligiblePlans);
         }
       }
       
@@ -539,7 +501,7 @@ const AdminDashboard: React.FC = () => {
       orgStats: {} as Record<string, any>,
       monthlyTrends: {} as Record<string, number>
     };
-
+    
     // Organization-wise statistics (simplified)
     const orgStatsMap: Record<string, { planCount: number, approvedCount: number, submittedCount: number, rejectedCount: number, draftCount: number }> = {};
 
@@ -1055,77 +1017,65 @@ const AdminDashboard: React.FC = () => {
       {/* Plan Analysis Tab */}
       {activeTab === 'budget-analysis' && (
         <div className="space-y-6">
-          {/* Budget Summary Cards for Plan Analysis */}
+          {/* Budget Overview Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-medium text-gray-500">Total Budget</h3>
+                <h3 className="text-sm font-medium text-gray-500">Government Funding</h3>
                 <DollarSign className="h-5 w-5 text-blue-500" />
               </div>
-              <p className="text-3xl font-semibold text-blue-600">
+              <p className="text-2xl font-semibold text-blue-600">
                 {isLoadingBudgets ? (
-                  <Loader className="h-6 w-6 animate-spin" />
+                  <Loader className="h-5 w-5 animate-spin" />
                 ) : (
-                  `$${(budgetData.totalBudget / 1000000).toFixed(1)}M`
+                  `$${(budgetData.totalGovernment / 1000000).toFixed(1)}M`
                 )}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {isLoadingBudgets ? 'Calculating...' : 'All organizations'}
               </p>
             </div>
-
+            
             <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-medium text-gray-500">Funded Amount</h3>
-                <CheckCircle className="h-5 w-5 text-green-500" />
+                <h3 className="text-sm font-medium text-gray-500">SDG Funding</h3>
+                <DollarSign className="h-5 w-5 text-green-500" />
               </div>
-              <p className="text-3xl font-semibold text-green-600">
+              <p className="text-2xl font-semibold text-green-600">
                 {isLoadingBudgets ? (
-                  <Loader className="h-6 w-6 animate-spin" />
+                  <Loader className="h-5 w-5 animate-spin" />
                 ) : (
-                  `$${(budgetData.totalFunded / 1000000).toFixed(1)}M`
+                  `$${(budgetData.totalSDG / 1000000).toFixed(1)}M`
                 )}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {isLoadingBudgets ? 'Calculating...' : 'Available funding'}
               </p>
             </div>
-
+            
             <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-medium text-gray-500">Funding Gap</h3>
-                <AlertCircle className="h-5 w-5 text-red-500" />
+                <h3 className="text-sm font-medium text-gray-500">Partners Funding</h3>
+                <DollarSign className="h-5 w-5 text-purple-500" />
               </div>
-              <p className="text-3xl font-semibold text-red-600">
+              <p className="text-2xl font-semibold text-purple-600">
                 {isLoadingBudgets ? (
-                  <Loader className="h-6 w-6 animate-spin" />
+                  <Loader className="h-5 w-5 animate-spin" />
                 ) : (
-                  `$${(budgetData.totalGap / 1000000).toFixed(1)}M`
+                  `$${(budgetData.totalPartners / 1000000).toFixed(1)}M`
                 )}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {isLoadingBudgets ? 'Calculating...' : 'Budget shortfall'}
               </p>
             </div>
-
+            
             <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-medium text-gray-500">Funding Rate</h3>
-                <TrendingUp className="h-5 w-5 text-indigo-500" />
+                <h3 className="text-sm font-medium text-gray-500">Other Funding</h3>
+                <DollarSign className="h-5 w-5 text-orange-500" />
               </div>
-              <p className="text-3xl font-semibold text-indigo-600">
+              <p className="text-2xl font-semibold text-orange-600">
                 {isLoadingBudgets ? (
-                  <Loader className="h-6 w-6 animate-spin" />
+                  <Loader className="h-5 w-5 animate-spin" />
                 ) : (
-                  `${budgetData.totalBudget > 0 ? Math.round((budgetData.totalFunded / budgetData.totalBudget) * 100) : 0}%`
+                  `$${(budgetData.totalOther / 1000000).toFixed(1)}M`
                 )}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                {isLoadingBudgets ? 'Calculating...' : 'Budget coverage'}
               </p>
             </div>
           </div>
-
+          
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-medium text-gray-900 mb-6">Plan Distribution by Organization</h3>
 
