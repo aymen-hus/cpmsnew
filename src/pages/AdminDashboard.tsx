@@ -302,8 +302,8 @@ const AdminDashboard: React.FC = () => {
         );
         
         if (eligiblePlans.length > 0) {
-          // Don't await - let it run in background
-          calculateBudgetsOptimized(eligiblePlans);
+          // Calculate budgets immediately for dashboard display
+          calculatePlanBudgets(eligiblePlans);
         }
         
         return plans;
@@ -329,20 +329,28 @@ const AdminDashboard: React.FC = () => {
     cacheTime: 300000 // 5 minutes
   });
 
-  // Optimized budget calculation function
-  const calculateBudgetsOptimized = async (eligiblePlans: any[]) => {
+  // Real budget calculation function that fetches actual budget data
+  const calculatePlanBudgets = async (eligiblePlans: any[]) => {
     if (isLoadingBudgets || eligiblePlans.length === 0) return;
     
     setIsLoadingBudgets(true);
-    console.log(`[AdminDashboard] Starting optimized budget calculation for ${eligiblePlans.length} plans`);
+    console.log(`[AdminDashboard] Starting budget calculation for ${eligiblePlans.length} eligible plans`);
     
     try {
       let totalBudget = 0;
       let totalFunded = 0;
-      const orgBudgets: Record<string, { total: number; funded: number; gap: number; planCount: number }> = {};
+      const orgBudgets: Record<string, { 
+        total: number; 
+        funded: number; 
+        gap: number; 
+        planCount: number;
+        government: number;
+        sdg: number;
+        partners: number;
+      }> = {};
       
-      // Process plans in smaller batches for production
-      const batchSize = 3;
+      // Process plans in small batches to avoid server overload
+      const batchSize = 2;
       const batches = [];
       for (let i = 0; i < eligiblePlans.length; i += batchSize) {
         batches.push(eligiblePlans.slice(i, i + batchSize));
@@ -352,82 +360,115 @@ const AdminDashboard: React.FC = () => {
         const batch = batches[batchIndex];
         console.log(`[AdminDashboard] Processing budget batch ${batchIndex + 1}/${batches.length}`);
         
-        // Process batch with timeout protection
+        // Process each plan in the batch
         await Promise.all(batch.map(async (plan) => {
           try {
             const orgName = plan.organization_name || `Organization ${plan.organization}`;
             
-            // Initialize org budget if not exists
+            // Initialize organization budget tracking if not exists
             if (!orgBudgets[orgName]) {
-              orgBudgets[orgName] = { 
+              orgBudgets[orgName] = {
                 total: 0, 
                 funded: 0, 
                 gap: 0, 
-                planCount: 0 
+                planCount: 0,
+                government: 0,
+                sdg: 0,
+                partners: 0
               };
             }
             orgBudgets[orgName].planCount++;
             
-            // Simplified budget calculation - only fetch activities with budgets
+            // Fetch activities for this plan's organization with timeout protection
             try {
-              const activitiesResponse = await Promise.race([
-                api.get(`/main-activities/?organization=${plan.organization}`, {
-                  timeout: 15000,
-                  headers: { 'Accept': 'application/json' }
-                }),
-                new Promise((_, reject) => 
-                  setTimeout(() => reject(new Error('Activities timeout')), 20000)
-                )
-              ]);
+              console.log(`[AdminDashboard] Fetching activities for plan ${plan.id} (org: ${orgName})`);
+              
+              const activitiesResponse = await api.get(`/main-activities/?organization=${plan.organization}`, {
+                timeout: 12000,
+                headers: { 'Accept': 'application/json' }
+              });
               
               const activities = activitiesResponse?.data?.results || activitiesResponse?.data || [];
+              console.log(`[AdminDashboard] Found ${activities.length} activities for org ${orgName}`);
               
-              // Calculate budget from activities with budget data
               let planBudget = 0;
+              let planGovernment = 0;
+              let planSDG = 0;
+              let planPartners = 0;
               let planFunded = 0;
               
+              // Process activities to calculate budget
               for (const activity of activities) {
-                if (activity.budget) {
-                  const budget = activity.budget;
-                  const requiredCost = budget.budget_calculation_type === 'WITH_TOOL' 
-                    ? Number(budget.estimated_cost_with_tool || 0)
-                    : Number(budget.estimated_cost_without_tool || 0);
+                try {
+                  // Get budget for this activity
+                  const budgetResponse = await api.get(`/activity-budgets/?activity=${activity.id}`, {
+                    timeout: 8000,
+                    headers: { 'Accept': 'application/json' }
+                  });
                   
-                  const fundedAmount = Number(budget.government_treasury || 0) +
-                                    Number(budget.sdg_funding || 0) +
-                                    Number(budget.partners_funding || 0) +
-                                    Number(budget.other_funding || 0);
+                  const budgets = budgetResponse?.data?.results || budgetResponse?.data || [];
                   
-                  planBudget += requiredCost;
-                  planFunded += fundedAmount;
+                  if (budgets.length > 0) {
+                    const budget = budgets[0]; // Get the first (should be only) budget
+                    
+                    // Calculate required budget (use the calculation type the plan specifies)
+                    const requiredBudget = budget.budget_calculation_type === 'WITH_TOOL' 
+                      ? Number(budget.estimated_cost_with_tool || 0)
+                      : Number(budget.estimated_cost_without_tool || 0);
+                    
+                    // Get funding amounts
+                    const government = Number(budget.government_treasury || 0);
+                    const sdg = Number(budget.sdg_funding || 0);
+                    const partners = Number(budget.partners_funding || 0);
+                    const other = Number(budget.other_funding || 0);
+                    const totalActivityFunding = government + sdg + partners + other;
+                    
+                    // Add to plan totals
+                    planBudget += requiredBudget;
+                    planGovernment += government;
+                    planSDG += sdg;
+                    planPartners += partners;
+                    planFunded += totalActivityFunding;
+                    
+                    console.log(`[AdminDashboard] Activity ${activity.id}: Budget=${requiredBudget}, Funded=${totalActivityFunding}`);
+                  }
+                } catch (budgetError) {
+                  console.warn(`[AdminDashboard] Budget fetch failed for activity ${activity.id}:`, budgetError.message);
+                  // Continue with other activities
                 }
               }
               
-              // Update totals
+              // Add plan totals to organization and grand totals
               totalBudget += planBudget;
               totalFunded += planFunded;
               orgBudgets[orgName].total += planBudget;
               orgBudgets[orgName].funded += planFunded;
-              orgBudgets[orgName].gap += Math.max(0, planBudget - planFunded);
+              orgBudgets[orgName].government += planGovernment;
+              orgBudgets[orgName].sdg += planSDG;
+              orgBudgets[orgName].partners += planPartners;
+              orgBudgets[orgName].gap = Math.max(0, orgBudgets[orgName].total - orgBudgets[orgName].funded);
               
-            } catch (activityError) {
-              console.warn(`[AdminDashboard] Budget calculation timeout for plan ${plan.id}`);
-              // Continue without budget data for this plan
+              console.log(`[AdminDashboard] Plan ${plan.id} totals: Budget=${planBudget}, Funded=${planFunded}`);
+              
+            } catch (activitiesError) {
+              console.warn(`[AdminDashboard] Activities fetch failed for plan ${plan.id}:`, activitiesError.message);
+              // Continue with other plans
             }
             
           } catch (planError) {
-            console.warn(`[AdminDashboard] Error processing plan ${plan.id}:`, planError);
+            console.warn(`[AdminDashboard] Error processing plan ${plan.id}:`, planError.message);
           }
         }));
         
-        // Small delay between batches
+        // Small delay between batches to prevent server overload
         if (batchIndex < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 1500));
         }
       }
       
       const totalGap = Math.max(0, totalBudget - totalFunded);
       
+      // Update state with calculated budget data
       setBudgetData({
         totalBudget,
         totalFunded,
@@ -444,12 +485,19 @@ const AdminDashboard: React.FC = () => {
       
     } catch (error) {
       console.error('[AdminDashboard] Budget calculation error:', error);
+      // Set default values on error
+      setBudgetData({
+        totalBudget: 0,
+        totalFunded: 0,
+        totalGap: 0,
+        orgBudgets: {}
+      });
     } finally {
       setIsLoadingBudgets(false);
     }
   };
 
-  // Manual refresh function
+  // Enhanced refresh function that also refreshes budget data
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setError(null);
@@ -463,7 +511,7 @@ const AdminDashboard: React.FC = () => {
           plan.status === 'SUBMITTED' || plan.status === 'APPROVED'
         );
         if (eligiblePlans.length > 0) {
-          calculateBudgetsOptimized(eligiblePlans);
+          calculatePlanBudgets(eligiblePlans);
         }
       }
       
@@ -501,7 +549,7 @@ const AdminDashboard: React.FC = () => {
       orgStats: {} as Record<string, any>,
       monthlyTrends: {} as Record<string, number>
     };
-    
+
     // Organization-wise statistics (simplified)
     const orgStatsMap: Record<string, { planCount: number, approvedCount: number, submittedCount: number, rejectedCount: number, draftCount: number }> = {};
 
