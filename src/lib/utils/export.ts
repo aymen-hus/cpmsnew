@@ -95,6 +95,13 @@ export const exportToExcel = async (
     planType: string;
   }
 ) => {
+  console.log('ExportToExcel called with data:', data?.length || 0, 'rows');
+  
+  if (!data || data.length === 0) {
+    console.error('No data provided for Excel export');
+    return;
+  }
+
   // Select headers based on language
   const HEADERS = language === 'am' ? TABLE_HEADERS_AM : TABLE_HEADERS_EN;
   
@@ -145,18 +152,22 @@ export const exportToExcel = async (
     row.Q4Target || '',
     row.AnnualTarget || '',
     row.Implementor || '',
-    formatCurrency(row.BudgetRequired),
-    formatCurrency(row.Government),
-    formatCurrency(row.Partners),
-    formatCurrency(row.SDG),
-    formatCurrency(row.Other),
-    formatCurrency(row.TotalAvailable),
-    formatCurrency(row.Gap)
+    row.BudgetRequired === '-' ? '-' : formatCurrency(row.BudgetRequired),
+    row.Government === '-' ? '-' : formatCurrency(row.Government),
+    row.Partners === '-' ? '-' : formatCurrency(row.Partners),
+    row.SDG === '-' ? '-' : formatCurrency(row.SDG),
+    row.Other === '-' ? '-' : formatCurrency(row.Other),
+    row.TotalAvailable === '-' ? '-' : formatCurrency(row.TotalAvailable),
+    row.Gap === '-' ? '-' : formatCurrency(row.Gap)
   ]);
+  
+  console.log(`Adding ${tableData.length} data rows to Excel`);
   
   // Add the data rows to the worksheet
   if (tableData.length > 0) {
     utils.sheet_add_aoa(ws, tableData, { origin: `A${dataStartRow + 1}` });
+  } else {
+    console.warn('No table data to add to Excel');
   }
   
   // Set up merges for header cells

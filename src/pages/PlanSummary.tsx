@@ -273,6 +273,157 @@ const PlanSummary: React.FC = () => {
 
   const budgetTotals = calculateTotalBudget();
 
+  // Convert plan data to export format (same as PlanReviewTable displays)
+  const convertPlanDataToExportFormat = (objectives: any[]) => {
+    const exportData: any[] = [];
+    
+    if (!objectives || !Array.isArray(objectives)) {
+      console.warn('No objectives to export');
+      return exportData;
+    }
+
+    objectives.forEach((objective, objIndex) => {
+      if (!objective) return;
+      
+      // Calculate objective weight by summing initiative weights (same as table)
+      const calculatedWeight = objective.initiatives?.reduce((sum, initiative) => {
+        return sum + (Number(initiative.weight) || 0);
+      }, 0) || 0;
+      
+      let objectiveAdded = false;
+      
+      if (!objective.initiatives || objective.initiatives.length === 0) {
+        // Objective with no initiatives
+        exportData.push({
+          No: objIndex + 1,
+          'Strategic Objective': objective.title || 'Untitled Objective',
+          'Strategic Objective Weight': `${calculatedWeight.toFixed(1)}%`,
+          'Strategic Initiative': 'No initiatives',
+          'Initiative Weight': '-',
+          'Performance Measure/Main Activity': '-',
+          'Weight': '-',
+          'Baseline': '-',
+          'Q1Target': '-',
+          'Q2Target': '-',
+          'SixMonthTarget': '-',
+          'Q3Target': '-',
+          'Q4Target': '-',
+          'AnnualTarget': '-',
+          'Implementor': '-',
+          'BudgetRequired': '-',
+          'Government': '-',
+          'Partners': '-',
+          'SDG': '-',
+          'Other': '-',
+          'TotalAvailable': '-',
+          'Gap': '-'
+        });
+      } else {
+        objective.initiatives.forEach((initiative: any) => {
+          if (!initiative) return;
+          
+          const performanceMeasures = initiative.performance_measures || [];
+          const mainActivities = initiative.main_activities || [];
+          const allItems = [...performanceMeasures, ...mainActivities];
+          
+          if (allItems.length === 0) {
+            // Initiative with no measures or activities
+            exportData.push({
+              No: objectiveAdded ? '' : (objIndex + 1).toString(),
+              'Strategic Objective': objectiveAdded ? '' : (objective.title || 'Untitled Objective'),
+              'Strategic Objective Weight': objectiveAdded ? '' : `${calculatedWeight.toFixed(1)}%`,
+              'Strategic Initiative': initiative.name || 'Untitled Initiative',
+              'Initiative Weight': `${initiative.weight || 0}%`,
+              'Performance Measure/Main Activity': 'No measures or activities',
+              'Weight': '-',
+              'Baseline': '-',
+              'Q1Target': '-',
+              'Q2Target': '-',
+              'SixMonthTarget': '-',
+              'Q3Target': '-',
+              'Q4Target': '-',
+              'AnnualTarget': '-',
+              'Implementor': initiative.organization_name || '-',
+              'BudgetRequired': '-',
+              'Government': '-',
+              'Partners': '-',
+              'SDG': '-',
+              'Other': '-',
+              'TotalAvailable': '-',
+              'Gap': '-'
+            });
+            objectiveAdded = true;
+          } else {
+            let initiativeAddedForObjective = false;
+            
+            allItems.forEach((item: any) => {
+              if (!item) return;
+              
+              const isPerformanceMeasure = performanceMeasures.includes(item);
+              
+              // Calculate budget values (same logic as table)
+              let budgetRequired = 0;
+              let government = 0;
+              let partners = 0;
+              let sdg = 0;
+              let other = 0;
+              let totalAvailable = 0;
+              let gap = 0;
+              
+              if (!isPerformanceMeasure && item.budget) {
+                budgetRequired = item.budget.budget_calculation_type === 'WITH_TOOL' ? 
+                  Number(item.budget.estimated_cost_with_tool || 0) : 
+                  Number(item.budget.estimated_cost_without_tool || 0);
+                
+                government = Number(item.budget.government_treasury || 0);
+                partners = Number(item.budget.partners_funding || 0);
+                sdg = Number(item.budget.sdg_funding || 0);
+                other = Number(item.budget.other_funding || 0);
+                totalAvailable = government + partners + sdg + other;
+                gap = Math.max(0, budgetRequired - totalAvailable);
+              }
+              
+              // Calculate 6-month target (same logic as table)
+              const sixMonthTarget = item.target_type === 'cumulative' 
+                ? Number(item.q1_target || 0) + Number(item.q2_target || 0) 
+                : Number(item.q2_target || 0);
+              
+              exportData.push({
+                No: objectiveAdded ? '' : (objIndex + 1).toString(),
+                'Strategic Objective': objectiveAdded ? '' : (objective.title || 'Untitled Objective'),
+                'Strategic Objective Weight': objectiveAdded ? '' : `${calculatedWeight.toFixed(1)}%`,
+                'Strategic Initiative': initiativeAddedForObjective ? '' : (initiative.name || 'Untitled Initiative'),
+                'Initiative Weight': initiativeAddedForObjective ? '' : `${initiative.weight || 0}%`,
+                'Performance Measure/Main Activity': item.name || 'Untitled Item',
+                'Weight': `${item.weight || 0}%`,
+                'Baseline': item.baseline || '-',
+                'Q1Target': item.q1_target || 0,
+                'Q2Target': item.q2_target || 0,
+                'SixMonthTarget': sixMonthTarget,
+                'Q3Target': item.q3_target || 0,
+                'Q4Target': item.q4_target || 0,
+                'AnnualTarget': item.annual_target || 0,
+                'Implementor': initiative.organization_name || '-',
+                'BudgetRequired': budgetRequired,
+                'Government': government,
+                'Partners': partners,
+                'SDG': sdg,
+                'Other': other,
+                'TotalAvailable': totalAvailable,
+                'Gap': gap
+              });
+              
+              objectiveAdded = true;
+              initiativeAddedForObjective = true;
+            });
+          }
+        });
+      }
+    });
+    
+    console.log(`Converted ${objectives.length} objectives to ${exportData.length} export rows`);
+    return exportData;
+  };</anoltAction>
   const formatDate = (dateString: string | undefined | null) => {
     if (!dateString) return 'N/A';
     try {
@@ -347,19 +498,32 @@ const PlanSummary: React.FC = () => {
   };
 
   const handleExportExcel = () => {
-    if (!processedPlanData?.objectives) return;
-    exportToExcel(
-      processedPlanData.objectives,
-      `plan-${new Date().toISOString().slice(0, 10)}`,
-      'en',
-      {
-        organization: organizationName,
-        planner: processedPlanData.planner_name || 'N/A',
-        fromDate: processedPlanData.from_date || 'N/A',
-        toDate: processedPlanData.to_date || 'N/A',
-        planType: processedPlanData.type || 'N/A'
-      }
-    );
+    if (!processedPlanData?.objectives) {
+      console.error('No objectives data available for export');
+      return;
+    }
+    
+    console.log('Exporting plan data:', processedPlanData.objectives);
+    
+    try {
+      // Convert plan data to export format (same logic as PlanReviewTable)
+      const exportData = convertPlanDataToExportFormat(processedPlanData.objectives);
+      
+      exportToExcel(
+        exportData,
+        `plan-${new Date().toISOString().slice(0, 10)}`,
+        'en',
+        {
+          organization: organizationName,
+          planner: processedPlanData.planner_name || 'N/A',
+          fromDate: processedPlanData.from_date || 'N/A',
+          toDate: processedPlanData.to_date || 'N/A',
+          planType: processedPlanData.type || 'N/A'
+        }
+      );
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+    }
   };
 
   const handleExportPDF = () => {
