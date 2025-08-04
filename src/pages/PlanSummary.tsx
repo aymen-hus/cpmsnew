@@ -63,17 +63,9 @@ const PlanSummary: React.FC = () => {
           effective_weight: objective.effective_weight
         });
         
-        // Ensure the objective has the correct weight for this plan
-        // The weight in the plan data should be the planner's selected weight
-        if (objective.planner_weight !== undefined && objective.planner_weight !== null) {
-          objective.effective_weight = objective.planner_weight;
-          console.log(`Using planner_weight ${objective.planner_weight} for objective ${objective.id}`);
-        } else if (objective.effective_weight !== undefined) {
-          console.log(`Using effective_weight ${objective.effective_weight} for objective ${objective.id}`);
-        } else {
-          objective.effective_weight = objective.weight;
-          console.log(`Using original weight ${objective.weight} for objective ${objective.id}`);
-        }
+        // PRESERVE THE PLAN-SPECIFIC WEIGHT (this is what the planner selected for THIS plan)
+        // Don't overwrite with fresh data - use what was saved with the plan
+        console.log(`Preserving plan-specific weight for objective ${objective.id}: ${objective.effective_weight || objective.planner_weight || objective.weight}`);
         
         objective.initiatives = Array.isArray(objective.initiatives) 
           ? objective.initiatives 
