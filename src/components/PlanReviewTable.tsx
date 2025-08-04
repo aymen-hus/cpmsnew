@@ -715,7 +715,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
                       <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">0.0%</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{displayWeight}%</td>
                       <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
@@ -765,7 +765,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                             </>
                           )}
                           <td className="px-6 py-4 text-sm text-gray-900">{initiative.name}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{initiative.weight}%</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(initiative.weight || 0)}%</td>
                           <td className="px-6 py-4 text-sm text-gray-500 italic">No measures or activities</td>
                           <td className="px-6 py-4 text-sm text-gray-500">-</td>
                           <td className="px-6 py-4 text-sm text-gray-500">-</td>
@@ -844,7 +844,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                   <div className="font-medium">{initiative.name}</div>
                                 </td>
                                 <td rowSpan={initiativeRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-blue-50">
-                                  {initiative.weight}%
+                                  {Number(initiative.weight || 0)}%
                                 </td>
                               </>
                             )}
@@ -858,14 +858,14 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                 {item.name}
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.weight}%</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.weight || 0)}%</td>
                             <td className="px-6 py-4 text-sm text-gray-900">{item.baseline || '-'}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q1_target || 0}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q2_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.q1_target || 0)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.q2_target || 0)}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{sixMonthTarget}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q3_target || 0}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.q4_target || 0}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.annual_target || 0}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.q3_target || 0)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.q4_target || 0)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{Number(item.annual_target || 0)}</td>
                             <td className="px-6 py-4 text-sm text-gray-900">{initiative.organization_name || '-'}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(budgetRequired)}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(government)}</td>
