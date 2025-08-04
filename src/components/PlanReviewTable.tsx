@@ -693,20 +693,6 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                   planner_selected: plannerSelectedWeight,
                   displaying: displayWeight
                 });
-
-                // Calculate total rows for this objective
-                let objectiveRowSpan = 0;
-                objective.initiatives.forEach((initiative: any) => {
-                  const performanceMeasures = initiative.performance_measures || [];
-                  const mainActivities = initiative.main_activities || [];
-                  const allItems = [...performanceMeasures, ...mainActivities];
-                  
-                  if (allItems.length === 0) {
-                    objectiveRowSpan += 1;
-                  } else {
-                    objectiveRowSpan += allItems.length;
-                  }
-                });
                 
                 if (objectiveRowSpan === 0) objectiveRowSpan = 1;
 
