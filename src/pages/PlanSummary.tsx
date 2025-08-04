@@ -5,7 +5,6 @@ import { plans, auth, initiatives, performanceMeasures, mainActivities } from '.
 import { ArrowLeft, Loader, AlertCircle, Eye, FileSpreadsheet, Calendar, User, Building2, Target } from 'lucide-react';
 import PlanReviewTable from '../components/PlanReviewTable';
 import { format } from 'date-fns';
-import { exportToExcel, processDataForExport } from '../lib/utils/export';</anoltAction>
 
 interface StrategicObjective {
   id: number;

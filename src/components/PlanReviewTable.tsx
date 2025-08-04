@@ -678,15 +678,27 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
               {processedObjectives.map((objective, objIndex) => {
                 // Use the weight that was saved with THIS specific plan
                 // This is the weight the planner selected when creating this plan
-                // Calculate objective weight as sum of all initiative weights
-                const initiativeWeights = objective.initiatives?.map((init: any) => Number(init.weight || 0)) || [];
-                const calculatedObjectiveWeight = initiativeWeights.reduce((sum: number, weight: number) => sum + weight, 0);
+                let planSpecificWeight = objective.weight; // Default fallback
+                
+                // Check for plan-specific weight in different fields
+                if (objective.effective_weight !== undefined && objective.effective_weight !== null) {
+                  planSpecificWeight = objective.effective_weight;
+                  console.log(`Using effective_weight for obj ${objective.id}: ${objective.effective_weight}`);
+                } else if (objective.planner_weight !== undefined && objective.planner_weight !== null) {
+                  planSpecificWeight = objective.planner_weight;
+                  console.log(`Using planner_weight for obj ${objective.id}: ${objective.planner_weight}`);
+                } else {
+                  console.log(`Using original weight for obj ${objective.id}: ${objective.weight}`);
+                }
                   
-                const displayWeight = Number(calculatedObjectiveWeight).toFixed(1);
+                const displayWeight = Number(planSpecificWeight).toFixed(1);
                     
                 console.log(`Objective ${objective.id} (${objective.title}) weight display:`, {
-                  initiative_weights: initiativeWeights,
-                  calculated_sum: calculatedObjectiveWeight,
+                  plan_id: 'From plan data',
+                  planner_weight: objective.planner_weight,
+                  effective_weight: objective.effective_weight,
+                  original_weight: objective.weight,
+                  plan_specific_weight: planSpecificWeight,
                   displaying: displayWeight
                 });
 
