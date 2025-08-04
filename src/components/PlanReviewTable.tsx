@@ -676,14 +676,17 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                // ALWAYS use planner_weight if it exists (this is the planner's selected weight)
-                const plannerSelectedWeight = objective.planner_weight !== undefined && objective.planner_weight !== null 
-                  ? objective.planner_weight 
-                  : objective.weight;
+                // ALWAYS use effective_weight first (this contains the plan-specific weight)
+                const plannerSelectedWeight = objective.effective_weight !== undefined 
+                  ? objective.effective_weight
+                  : (objective.planner_weight !== undefined && objective.planner_weight !== null) 
+                    ? objective.planner_weight 
+                    : objective.weight;
                   
                 const displayWeight = Number(plannerSelectedWeight).toFixed(1);
                     
                 console.log(`Objective ${objective.id} (${objective.title}) weight display:`, {
+                  from_plan_data: 'YES - Using plan-specific data',
                   planner_weight: objective.planner_weight,
                   effective_weight: objective.effective_weight,
                   original_weight: objective.weight,
