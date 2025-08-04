@@ -170,6 +170,7 @@ const AdminDashboard: React.FC = () => {
         otherBudget: otherFunding
       };
     };
+    
     allPlansData.forEach((plan: any) => {
       // Count by status
       switch (plan.status) {
@@ -209,14 +210,14 @@ const AdminDashboard: React.FC = () => {
       orgStats[orgName].planCount++;
 
       // Calculate budget for this plan
-      const planBudget = calculatePlanBudget(plan);
-      orgStats[orgName].totalBudget += planBudget.totalBudget;
-      orgStats[orgName].availableFunding += planBudget.availableFunding;
-      orgStats[orgName].fundingGap += planBudget.fundingGap;
-      orgStats[orgName].governmentBudget += planBudget.governmentBudget;
-      orgStats[orgName].sdgBudget += planBudget.sdgBudget;
-      orgStats[orgName].partnersBudget += planBudget.partnersBudget;
-      orgStats[orgName].otherBudget += planBudget.otherBudget;
+      const budgetData = calculatePlanBudget(plan);
+      orgStats[orgName].totalBudget += budgetData.totalBudget;
+      orgStats[orgName].availableFunding += budgetData.availableFunding;
+      orgStats[orgName].fundingGap += budgetData.fundingGap;
+      orgStats[orgName].governmentBudget += budgetData.governmentBudget;
+      orgStats[orgName].sdgBudget += budgetData.sdgBudget;
+      orgStats[orgName].partnersBudget += budgetData.partnersBudget;
+      orgStats[orgName].otherBudget += budgetData.otherBudget;
 
       // Count plans by status per organization
       switch (plan.status) {
@@ -588,9 +589,6 @@ const AdminDashboard: React.FC = () => {
                     Partners Budget
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Other Budget
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Funding Gap
                   </th>
                 </tr>
@@ -627,9 +625,6 @@ const AdminDashboard: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-orange-600">
                       ${orgData.partnersBudget.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-600">
-                      ${(orgData.otherBudget || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-red-600">
                       ${orgData.fundingGap.toLocaleString()}
