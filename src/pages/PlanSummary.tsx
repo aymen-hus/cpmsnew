@@ -206,6 +206,7 @@ const PlanSummary: React.FC = () => {
       console.log('Setting plan objectives:', objectivesData);
       setPlanObjectives(objectivesData);
       setShowCompleteTable(true);
+      setShowCompleteTable(true);
     } catch (error) {
       console.error('Error loading complete objectives data:', error);
       setError('Failed to load complete plan data. Please try again.');
