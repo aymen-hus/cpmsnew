@@ -29,7 +29,6 @@ const PlanSummary: React.FC = () => {
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [processedPlanData, setProcessedPlanData] = useState<any>(null);
-  const [showTableView, setShowTableView] = useState(false);
 
   // Query hooks
   const { data: organizationsData } = useQuery({
@@ -466,24 +465,12 @@ const PlanSummary: React.FC = () => {
           </div>
           
           <div className="flex space-x-3">
-            {/* <button
+            <button
               onClick={handleExportExcel}
               className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
               <FileSpreadsheet className="h-4 w-4 mr-2" />
               Export Excel
-            </button> */}
-            
-            <button
-              onClick={() => setShowTableView(!showTableView)}
-              className={`flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium ${
-                showTableView 
-                  ? 'bg-blue-50 text-blue-700 border-blue-300' 
-                  : 'text-gray-700 bg-white hover:bg-gray-50'
-              }`}
-            >
-              <ClipboardCheck className="h-4 w-4 mr-2" />
-              {showTableView ? 'Hide Table View' : 'Show Table View'}
             </button>
             
             {processedPlanData.status === 'SUBMITTED' && (
@@ -495,13 +482,6 @@ const PlanSummary: React.FC = () => {
                 Check Again
               </button>
             )}
-            {/* <button
-              onClick={handleExportPDF}
-              className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 flex items-center"
-            >
-              <FilePdf className="h-4 w-4 mr-2" />
-              Export PDF
-            </button> */}
             
             {processedPlanData.status === 'SUBMITTED' && isEvaluator(authState?.userOrganizations) && (
               <button
@@ -515,11 +495,11 @@ const PlanSummary: React.FC = () => {
           </div>
         </div>
 
-        {showTableView && processedPlanData.objectives?.length > 0 && (
+        {processedPlanData.objectives?.length > 0 && (
           <div className="mb-8">
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
-                <h2 className="text-lg font-medium text-gray-900">Complete Plan Table View</h2>
+                <h2 className="text-lg font-medium text-gray-900">Complete Plan Details</h2>
                 <p className="text-sm text-gray-600 mt-1">
                   Detailed view showing all objectives, initiatives, measures, and activities
                 </p>
@@ -655,125 +635,6 @@ const PlanSummary: React.FC = () => {
                 </p>
               </div>
             </div>
-          </div>
-
-          <div>
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Strategic Objectives</h2>
-            {!processedPlanData.objectives?.length ? (
-              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
-                <p className="text-gray-500">No strategic objectives found for this plan.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {processedPlanData.objectives.map((objective: any, index: number) => (
-                  <div key={objective?.id || `obj-${index}`} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h3 className="font-medium text-gray-900">{objective?.title || 'Untitled Objective'}</h3>
-                        <p className="text-sm text-gray-500">{objective?.description || 'No description'}</p>
-                      </div>
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        {objective?.weight || 0}%
-                      </span>
-                    </div>
-
-                    {!objective?.initiatives?.length ? (
-                      <div className="ml-4 mt-3 text-sm text-gray-500 italic">No initiatives found for this objective</div>
-                    ) : (
-                      <div className="ml-4 mt-4 space-y-3">
-                        {objective.initiatives.map((initiative: any, initIndex: number) => (
-                          <div key={initiative?.id || `init-${initIndex}`} className="border-l-2 border-gray-200 pl-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="font-medium text-gray-900">{initiative?.name || 'Untitled Initiative'}</h4>
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                Initiative: {initiative?.weight || 0}%
-                              </span>
-                            </div>
-                            <div className="flex items-center text-sm text-gray-600 mt-1 gap-2">
-                              {initiative?.organization_name && (
-                                <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs">
-                                  Implementor: {initiative.organization_name}
-                                </span>
-                              )}
-                            </div>
-                            
-                            {initiative?.performance_measures?.length > 0 ? (
-                              <div className="mt-3">
-                                <h5 className="text-sm font-medium text-gray-700">Performance Measures</h5>
-                                <div className="mt-2 space-y-2 pl-2">
-                                  {initiative.performance_measures.map((measure: any, measureIndex: number) => (
-                                    <div key={measure?.id || `measure-${measureIndex}`} className="text-sm bg-blue-50 p-3 rounded-lg">
-                                      <p className="text-gray-900 font-medium">{measure?.name || 'Untitled Measure'}</p>
-                                      <div className="flex items-center">
-                                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-                                          {measure?.weight || 0}%
-                                        </span>
-                                      </div>
-                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-xs text-gray-500">
-                                        <div>Baseline: {measure?.baseline || 'N/A'}</div>
-                                        <div>Annual Target: {measure?.annual_target || 0}</div>
-                                        <div>Q1: {measure?.q1_target || 0}</div>
-                                        <div>Q2: {measure?.q2_target || 0}</div>
-                                        <div>Q3: {measure?.q3_target || 0}</div>
-                                        <div>Q4: {measure?.q4_target || 0}</div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="mt-2 text-xs text-gray-500 italic pl-2">No performance measures</div>
-                            )}
-
-                            {initiative?.main_activities?.length > 0 ? (
-                              <div className="mt-3">
-                                <h5 className="text-sm font-medium text-gray-700">Main Activities</h5>
-                                <div className="mt-2 space-y-2 pl-2">
-                                  {initiative.main_activities.map((activity: any, actIndex: number) => (
-                                    <div key={activity?.id || `activity-${actIndex}`} className="text-sm bg-green-50 p-3 rounded-lg">
-                                      <p className="text-gray-900 font-medium">{activity?.name || 'Untitled Activity'}</p>
-                                      <div className="flex items-center">
-                                        <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
-                                          {activity?.weight || 0}%
-                                        </span>
-                                      </div>
-                                      <div className="mt-2 text-xs">
-                                        <p className="text-gray-600">
-                                          Period: {getPeriodString(activity)}
-                                        </p>
-                                        {activity?.budget && (
-                                          <div className="mt-1 grid grid-cols-2 gap-2">
-                                            <p className="text-gray-600">
-                                              Budget: ${(activity.budget.budget_calculation_type === 'WITH_TOOL' 
-                                                ? Number(activity.budget.estimated_cost_with_tool || 0) 
-                                                : Number(activity.budget.estimated_cost_without_tool || 0)).toLocaleString()}
-                                            </p>
-                                            <p className="text-gray-600">
-                                              Funding: ${(
-                                                Number(activity.budget.government_treasury || 0) +
-                                                Number(activity.budget.sdg_funding || 0) +
-                                                Number(activity.budget.partners_funding || 0) +
-                                                Number(activity.budget.other_funding || 0)
-                                              ).toLocaleString()}
-                                            </p>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="mt-2 text-xs text-gray-500 italic pl-2">No main activities</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
