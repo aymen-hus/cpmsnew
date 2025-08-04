@@ -715,7 +715,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
                       <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">0.0%</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{displayWeight}%</td>
                       <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
