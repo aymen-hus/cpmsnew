@@ -676,12 +676,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                // Use the effective_weight that was already calculated in PlanSummary
-                const effectiveWeight = objective.effective_weight !== undefined 
-                  ? objective.effective_weight 
-                  : (objective.planner_weight !== undefined && objective.planner_weight !== null)
-                    ? objective.planner_weight 
-                    : objective.weight;
+                const effectiveWeight = objective.effective_weight || objective.planner_weight || objective.weight;
                 let objectiveRowSpan = 0;
                 
                 // Calculate total rows for this objective
