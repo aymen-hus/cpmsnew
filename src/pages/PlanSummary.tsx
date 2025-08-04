@@ -229,3 +229,143 @@
 };
 
 export default PlanSummary;
+
+  // Simple function to fetch ALL objectives data for the plan
+  const fetchAllObjectivesData = async () => {
+    try {
+      console.log('=== FETCHING COMPLETE PLAN DATA ===');
+      console.log('Plan data:', planData);
+      
+      // Get objective IDs - handle both single and multiple objectives
+      let objectiveIds: string[] = [];
+      
+      if (planData.selected_objectives && planData.selected_objectives.length > 0) {
+        // Handle both array of objects and array of IDs
+        objectiveIds = planData.selected_objectives.map(obj => {
+          if (typeof obj === 'object' && obj.id) {
+            return obj.id.toString();
+          } else if (typeof obj === 'string' || typeof obj === 'number') {
+            return obj.toString();
+          }
+          return null;
+        }).filter(Boolean);
+      } else if (planData.strategic_objective) {
+        objectiveIds = [planData.strategic_objective.toString()];
+      }
+      
+      console.log('Objective IDs to fetch:', objectiveIds);
+      
+      if (objectiveIds.length === 0) {
+        console.log('No objective IDs found, returning empty array');
+        return [];
+      }
+
+      // Fetch all objectives from system
+      console.log('Fetching all objectives from system...');
+      const allObjectivesResponse = await objectives.getAll();
+      const allObjectives = allObjectivesResponse?.data || [];
+      console.log(`Found ${allObjectives.length} total objectives in system`);
+      
+      // Filter to get only objectives for this plan
+      const planObjectives = allObjectives.filter(obj => 
+        objectiveIds.includes(obj.id.toString())
+      );
+      
+      console.log(`Filtered to ${planObjectives.length} objectives for this plan:`, 
+        planObjectives.map(obj => `${obj.id}: ${obj.title}`));
+      
+      if (planObjectives.length === 0) {
+        console.warn('No matching objectives found for plan!');
+        return [];
+      }
+
+      // For each objective, get ALL its data
+      console.log('=== FETCHING COMPLETE DATA FOR EACH OBJECTIVE ===');
+      const enrichedObjectives = await Promise.all(
+        planObjectives.map(async (objective, index) => {
+          try {
+            console.log(`\n--- Processing Objective ${index + 1}/${planObjectives.length}: ${objective.title} (ID: ${objective.id}) ---`);
+            
+            // Get ALL initiatives for this objective (no filtering by organization)
+            const initiativesResponse = await initiatives.getByObjective(objective.id.toString());
+            const objectiveInitiatives = initiativesResponse?.data || [];
+            console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
+            
+            if (objectiveInitiatives.length === 0) {
+              console.log(`No initiatives found for objective ${objective.id}`);
+              return {
+                ...objective,
+                effective_weight: objective.planner_weight || objective.weight,
+                initiatives: []
+              };
+            }
+
+            // For each initiative, get ALL measures and activities
+            console.log('Fetching measures and activities for each initiative...');
+            const enrichedInitiatives = await Promise.all(
+              objectiveInitiatives.map(async (initiative, initIndex) => {
+                try {
+                  console.log(`  Initiative ${initIndex + 1}: ${initiative.name} (ID: ${initiative.id})`);
+                  
+                  // Fetch both measures and activities in parallel
+                  const [measuresResponse, activitiesResponse] = await Promise.all([
+                    performanceMeasures.getByInitiative(initiative.id),
+                    mainActivities.getByInitiative(initiative.id)
+                  ]);
+                  
+                  const measures = measuresResponse?.data || [];
+                  const activities = activitiesResponse?.data || [];
+                  
+                  console.log(`    Found ${measures.length} measures and ${activities.length} activities`);
+                  
+                  return {
+                    ...initiative,
+                    performance_measures: measures,
+                    main_activities: activities
+                  };
+                } catch (error) {
+                  console.error(`Error fetching data for initiative ${initiative.id}:`, error);
+                  return {
+                    ...initiative,
+                    performance_measures: [],
+                    main_activities: []
+                  };
+                }
+              })
+            );
+            
+            console.log(`Completed objective ${objective.id} with ${enrichedInitiatives.length} enriched initiatives`);
+            
+            return {
+              ...objective,
+              effective_weight: objective.planner_weight || objective.weight,
+              initiatives: enrichedInitiatives
+            };
+          } catch (error) {
+            console.error(`Error processing objective ${objective.id}:`, error);
+            return {
+              ...objective,
+              effective_weight: objective.weight,
+              initiatives: []
+            };
+          }
+        })
+      );
+      
+      console.log('=== FINAL RESULT ===');
+      console.log(`Successfully processed ${enrichedObjectives.length} objectives`);
+      
+      // Log summary of what we got
+      enrichedObjectives.forEach((obj, index) => {
+        const totalInitiatives = obj.initiatives?.length || 0;
+        const totalMeasures = obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0;
+        const totalActivities = obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0;
+        console.log(`Objective ${index + 1}: ${obj.title} - ${totalInitiatives} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+      });
+      
+      return enrichedObjectives;
+    } catch (error) {
+      console.error('Error in fetchAllObjectivesData:', error);
+      throw error; // Re-throw to show error in UI
+    }
+  };
