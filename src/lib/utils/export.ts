@@ -539,10 +539,10 @@ export const processDataForExport = (objectives: any[], language: string = 'en')
   objectives.forEach((objective, objIndex) => {
     if (!objective) return;
     
-    // Use effective weight (planner_weight if available, otherwise weight)
-    const effectiveWeight = objective.effective_weight || 
-                           (objective.planner_weight !== undefined && objective.planner_weight !== null) ? 
-                           objective.planner_weight : objective.weight;
+    // Calculate objective weight by summing all initiative weights
+    const calculatedObjectiveWeight = objective.initiatives?.reduce((sum, initiative) => {
+      return sum + (Number(initiative.weight) || 0);
+    }, 0) || 0;
     
     // Track if we've added the objective information
     let objectiveAdded = false;

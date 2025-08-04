@@ -403,7 +403,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [objectives, userOrgId, retryCount, isPreviewMode, isViewOnly]);</anoltAction>
+  }, [objectives, userOrgId, retryCount, isPreviewMode, isViewOnly]);
 
   const handleRetry = () => {
     setRetryCount(prev => prev + 1);
@@ -676,7 +676,11 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                const effectiveWeight = objective.effective_weight || objective.planner_weight || objective.weight;
+                // Calculate objective weight by summing initiative weights
+                const calculatedWeight = objective.initiatives?.reduce((sum, initiative) => {
+                  return sum + (Number(initiative.weight) || 0);
+                }, 0) || 0;
+                
                 let objectiveRowSpan = 0;
                 
                 // Calculate total rows for this objective
@@ -698,7 +702,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
                       <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{effectiveWeight}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{calculatedWeight.toFixed(1)}%</td>
                       <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
@@ -743,7 +747,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                 )}
                               </td>
                               <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
-                                {effectiveWeight}%
+                                {calculatedWeight.toFixed(1)}%
                               </td>
                             </>
                           )}
@@ -817,7 +821,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                   )}
                                 </td>
                                 <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
-                                  {effectiveWeight}%
+                                  {calculatedWeight.toFixed(1)}%
                                 </td>
                               </>
                             )}
