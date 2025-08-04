@@ -47,25 +47,6 @@ const PlanSummary: React.FC = () => {
     fetchUserData();
   }, [navigate]);
 
-  // Fetch plan data
-  const { data: planData, isLoading, error: planError } = useQuery({
-    queryKey: ['plan', planId],
-    queryFn: async () => {
-      if (!planId) throw new Error('Plan ID is required');
-      
-      console.log('Fetching plan data for ID:', planId);
-      const plan = await plans.getById(planId);
-      console.log('Raw plan data received:', plan);
-      
-      // Normalize and process the plan data
-      const processedPlan = normalizeAndProcessPlanData(plan);
-      console.log('Processed plan data:', processedPlan);
-      
-      return processedPlan;
-    },
-    enabled: !!planId,
-    retry: 2
-  });
   // Normalize and process plan data to ensure proper structure
   const normalizeAndProcessPlanData = (plan: any) => {
     if (!plan) return plan;
@@ -307,6 +288,25 @@ const PlanSummary: React.FC = () => {
     loadObjectivesData();
   }, [planData, userOrgId]);
 
+  // Fetch plan data
+  const { data: planData, isLoading, error: planError } = useQuery({
+    queryKey: ['plan', planId],
+    queryFn: async () => {
+      if (!planId) throw new Error('Plan ID is required');
+      
+      console.log('Fetching plan data for ID:', planId);
+      const plan = await plans.getById(planId);
+      console.log('Raw plan data received:', plan);
+      
+      // Normalize and process the plan data
+      const processedPlan = normalizeAndProcessPlanData(plan);
+      console.log('Processed plan data:', processedPlan);
+      
+      return processedPlan;
+    },
+    enabled: !!planId,
+    retry: 2
+  });
 
   const formatDate = (dateString: string) => {
     try {
