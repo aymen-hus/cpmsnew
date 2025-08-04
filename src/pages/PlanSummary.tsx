@@ -5,6 +5,7 @@ import { plans, auth, initiatives, performanceMeasures, mainActivities } from '.
 import { ArrowLeft, Loader, AlertCircle, Eye, FileSpreadsheet, Calendar, User, Building2, Target } from 'lucide-react';
 import PlanReviewTable from '../components/PlanReviewTable';
 import { format } from 'date-fns';
+import { exportToExcel, processDataForExport } from '../lib/utils/export';
 
 interface StrategicObjective {
   id: number;
@@ -21,6 +22,8 @@ const PlanSummary: React.FC = () => {
   const navigate = useNavigate();
   const [userOrgId, setUserOrgId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [processedObjectives, setProcessedObjectives] = useState<any[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
   // Get current user data
   useEffect(() => {
@@ -107,7 +110,7 @@ const PlanSummary: React.FC = () => {
   };
 
   // Comprehensive data fetching function
-  const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
+  const fetchCompleteObjectiveData = async (objectivesList: any[]) => {
     if (!objectivesList || !objectivesList.length) {
       console.log('No objectives provided to fetch data for');
       return [];
@@ -158,9 +161,14 @@ const PlanSummary: React.FC = () => {
             
             console.log(`Total initiatives for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
 
-            // Filter initiatives based on organization for this plan
-            const filteredInitiatives = allObjectiveInitiatives;
-            console.log(`Using ${filteredInitiatives.length} initiatives`);
+            // Filter initiatives based on user organization
+            const filteredInitiatives = allObjectiveInitiatives.filter(initiative => 
+              initiative.is_default || 
+              !initiative.organization || 
+              initiative.organization === userOrgId
+            );
+            
+            console.log(`Filtered initiatives for user org ${userOrgId}: ${filteredInitiatives.length} out of ${allObjectiveInitiatives.length}`);
 
             // For each initiative, fetch performance measures and main activities
             const enrichedInitiatives = await Promise.all(
@@ -173,15 +181,21 @@ const PlanSummary: React.FC = () => {
                   const allMeasures = measuresResponse?.data || [];
                   console.log(`    Found ${allMeasures.length} performance measures`);
 
+                  // Filter measures by organization
+                  const filteredMeasures = allMeasures.filter(measure =>
+                    !measure.organization || measure.organization === userOrgId
+                  );
+
                   // Fetch main activities
                   const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
                   const allActivities = activitiesResponse?.data || [];
                   console.log(`    Found ${allActivities.length} main activities`);
-
-                  // Use measures and activities as-is
-                  const filteredMeasures = allMeasures;
-                  const filteredActivities = allActivities;
                   
+                  // Filter activities by organization
+                  const filteredActivities = allActivities.filter(activity =>
+                    !activity.organization || activity.organization === userOrgId
+                  );
+
                   console.log(`    Using ${filteredMeasures.length} measures and ${filteredActivities.length} activities`);
 
                   return {
@@ -220,12 +234,59 @@ const PlanSummary: React.FC = () => {
         })
       );
 
+      console.log('=== FINAL SUMMARY ===');
+      console.log('Successfully enriched objectives with complete data:', 
+        enrichedObjectives.map(obj => ({
+          id: obj.id,
+          title: obj.title,
+          weight: obj.weight,
+          planner_weight: obj.planner_weight,
+          effective_weight: obj.effective_weight,
+          initiativesCount: obj.initiatives?.length || 0
+        }))
+      );
+      
       return enrichedObjectives;
     } catch (error) {
       console.error('Error in fetchCompleteObjectiveData:', error);
-      return objectivesList;
+      throw error;
     }
   };
+
+  // Load and process objectives data when component mounts
+  useEffect(() => {
+    const loadObjectivesData = async () => {
+      if (!planData?.objectives || !userOrgId) return;
+
+      try {
+        setIsLoadingData(true);
+        setError(null);
+        
+        console.log('Loading objectives data for plan:', planData.id);
+        console.log('Plan objectives with weights:', planData.objectives.map(obj => ({
+          id: obj.id,
+          title: obj.title,
+          weight: obj.weight,
+          planner_weight: obj.planner_weight,
+          effective_weight: obj.effective_weight
+        })));
+        
+        // Use the objectives directly from plan data (they contain plan-specific weights)
+        // Only enrich with initiatives, measures, and activities
+        const enrichedObjectives = await fetchCompleteObjectiveData(planData.objectives);
+        
+        console.log('Final enriched objectives for display:', enrichedObjectives.length);
+        setProcessedObjectives(enrichedObjectives);
+      } catch (error) {
+        console.error('Error loading objectives data:', error);
+        setError('Failed to load complete plan data');
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+
+    loadObjectivesData();
+  }, [planData, userOrgId]);
 
   // Fetch plan data
   const { data: planData, isLoading, error: planError } = useQuery({
@@ -360,10 +421,44 @@ const PlanSummary: React.FC = () => {
         </div>
       </div>
 
+      {/* Export Button */}
+      <div className="flex justify-end mb-6">
+        <button
+          onClick={() => {
+            const objectivesToExport = processedObjectives.length > 0 ? processedObjectives : planData.objectives || [];
+            const exportData = processDataForExport(objectivesToExport, 'en');
+            exportToExcel(
+              exportData,
+              `plan-summary-${planData.id}-${new Date().toISOString().slice(0, 10)}`,
+              'en',
+              {
+                organization: planData.organization_name || `Organization ${planData.organization}`,
+                planner: planData.planner_name,
+                fromDate: planData.from_date,
+                toDate: planData.to_date,
+                planType: planData.type
+              }
+            );
+          }}
+          className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+        >
+          <FileSpreadsheet className="h-4 w-4 mr-2" />
+          Export to Excel
+        </button>
+      </div>
+
+      {/* Loading state for data enrichment */}
+      {isLoadingData && (
+        <div className="flex items-center justify-center py-8">
+          <Loader className="h-6 w-6 animate-spin mr-2 text-blue-600" />
+          <span className="text-lg">Loading complete plan data...</span>
+        </div>
+      )}
+
       {/* Plan Table */}
-      {planData.objectives && planData.objectives.length > 0 ? (
+      {((processedObjectives.length > 0) || (planData.objectives && planData.objectives.length > 0)) ? (
         <PlanReviewTable
-          objectives={planData.objectives}
+          objectives={processedObjectives.length > 0 ? processedObjectives : planData.objectives}
           onSubmit={async () => {}}
           isSubmitting={false}
           organizationName={planData.organization_name || `Organization ${planData.organization}`}
