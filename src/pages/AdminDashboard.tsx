@@ -116,18 +116,72 @@ const AdminDashboard: React.FC = () => {
       totalGapAllOrgs: 0
     };
 
-    // Organization statistics with unique budget values
+    // Organization statistics with REAL budget values from plans
     const orgStats: Record<string, any> = {};
 
+    // Helper function to calculate real budget from plan data
+    const calculatePlanBudget = (plan: any) => {
+      let totalBudget = 0;
+      let governmentFunding = 0;
+      let sdgFunding = 0;
+      let partnersFunding = 0;
+      let otherFunding = 0;
+      
+      try {
+        // Traverse objectives → initiatives → main_activities to get budget data
+        if (plan.objectives && Array.isArray(plan.objectives)) {
+          plan.objectives.forEach((objective: any) => {
+            if (objective.initiatives && Array.isArray(objective.initiatives)) {
+              objective.initiatives.forEach((initiative: any) => {
+                if (initiative.main_activities && Array.isArray(initiative.main_activities)) {
+                  initiative.main_activities.forEach((activity: any) => {
+                    if (activity.budget) {
+                      // Get estimated cost based on calculation type
+                      const estimatedCost = activity.budget.budget_calculation_type === 'WITH_TOOL' 
+                        ? Number(activity.budget.estimated_cost_with_tool || 0)
+                        : Number(activity.budget.estimated_cost_without_tool || 0);
+                      
+                      totalBudget += estimatedCost;
+                      governmentFunding += Number(activity.budget.government_treasury || 0);
+                      sdgFunding += Number(activity.budget.sdg_funding || 0);
+                      partnersFunding += Number(activity.budget.partners_funding || 0);
+                      otherFunding += Number(activity.budget.other_funding || 0);
+                    }
+                  });
+                }
+              });
+            }
+          });
+        }
+      } catch (error) {
+        console.warn(`Error calculating budget for plan ${plan.id}:`, error);
+      }
+      
+      const totalAvailableFunding = governmentFunding + sdgFunding + partnersFunding + otherFunding;
+      const fundingGap = Math.max(0, totalBudget - totalAvailableFunding);
+      
+      return {
+        totalBudget,
+        availableFunding: totalAvailableFunding,
+        fundingGap,
+        governmentBudget: governmentFunding,
+        sdgBudget: sdgFunding,
+        partnersBudget: partnersFunding,
+        otherBudget: otherFunding
+      };
+    };
     allPlansData.forEach((plan: any) => {
       // Count by status
       switch (plan.status) {
         case 'DRAFT': stats.draftPlans++; break;
         case 'SUBMITTED': stats.submittedPlans++; break;
         case 'APPROVED': stats.approvedPlans++; break;
-          stats.totalPlans++; // Only count submitted and approved
-          stats.totalPlans++; // Only count submitted and approved
         case 'REJECTED': stats.rejectedPlans++; break;
+      }
+      
+      // Count submitted and approved as active plans
+      if (plan.status === 'SUBMITTED' || plan.status === 'APPROVED') {
+        stats.totalPlans++;
       }
 
       // Organization statistics
@@ -136,41 +190,24 @@ const AdminDashboard: React.FC = () => {
         `Organization ${plan.organization}`;
 
       if (!orgStats[orgName]) {
-        // Create unique budget values for each organization
-        const orgId = Number(plan.organization) || 1;
-        const baseMultiplier = (orgId * 47) % 100 + 50; // Creates values between 50-149
-        const planMultiplier = Math.max(1, orgStats[orgName]?.planCount || 1);
-        
         orgStats[orgName] = {
           planCount: 0,
-          totalBudget: baseMultiplier * 10000,
-          availableFunding: baseMultiplier * 7500,
-          fundingGap: baseMultiplier * 2500,
-          governmentBudget: baseMultiplier * 4000,
-          sdgBudget: baseMultiplier * 2000,
-          partnersBudget: baseMultiplier * 1500,
+          totalBudget: 0,
+          availableFunding: 0,
+          fundingGap: 0,
+          governmentBudget: 0,
+          sdgBudget: 0,
+          partnersBudget: 0,
+          otherBudget: 0,
           approvedPlans: 0,
-          submittedPlans: 0,
-          draftPlans: 0,
-          rejectedPlans: 0
-        };
-      }
-      
-      orgStats[orgName].planCount++;
-      
       // Count plans by status per organization
       switch (plan.status) {
         case 'DRAFT': orgStats[orgName].draftPlans++; break;
-        case 'SUBMITTED': 
-          orgStats[orgName].submittedPlans++; 
-          stats.totalPlans++; // Count submitted plans for active total
-          break;
-        case 'APPROVED': 
-          orgStats[orgName].approvedPlans++; 
-          stats.totalPlans++; // Count approved plans for active total
-          break;
+        case 'SUBMITTED': orgStats[orgName].submittedPlans++; break;
+        case 'APPROVED': orgStats[orgName].approvedPlans++; break;
         case 'REJECTED': orgStats[orgName].rejectedPlans++; break;
       }
+    });
     });
 
     // Calculate totals across all organizations
@@ -570,6 +607,9 @@ const AdminDashboard: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-orange-600">
                       ${orgData.partnersBudget.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-600">
+                      ${(orgData.otherBudget || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-red-600">
                       ${orgData.fundingGap.toLocaleString()}
