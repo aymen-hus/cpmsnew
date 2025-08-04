@@ -137,69 +137,39 @@ const PlanSummary: React.FC = () => {
         if (token) Cookies.set('csrftoken', token, { path: '/' });
       } catch (error) {
         console.error("Authentication check failed:", error);
-            
-        // FETCH FRESH OBJECTIVE DATA to get current planner_weight
-        let freshObjectiveData = objective;
-        try {
-          console.log(`Fetching fresh objective data for ${objective.id} to get planner_weight...`);
-          const freshObjectiveResponse = await api.get(`/strategic-objectives/${objective.id}/`);
-          if (freshObjectiveResponse.data) {
-            freshObjectiveData = freshObjectiveResponse.data;
-            console.log(`Fresh objective data for ${objective.id}:`, {
-              id: freshObjectiveData.id,
-              title: freshObjectiveData.title,
-              weight: freshObjectiveData.weight,
-              planner_weight: freshObjectiveData.planner_weight
-            });
-          }
-        } catch (fetchError) {
-          console.warn(`Failed to fetch fresh objective data for ${objective.id}, using provided data:`, fetchError);
-          freshObjectiveData = objective;
-        }
       }
-      // Use the FRESH objective data with current planner_weight
-      const plannerSelectedWeight = freshObjectiveData.planner_weight !== undefined && freshObjectiveData.planner_weight !== null
-        ? freshObjectiveData.planner_weight
-        : freshObjectiveData.weight;
-        
-      console.log(`Objective ${objective.id} weight calculation:`, {
-        original_weight: freshObjectiveData.weight,
-        planner_weight: freshObjectiveData.planner_weight,
-        selected_weight: plannerSelectedWeight
-      });
     };
-
+    
     ensureAuth();
   }, [navigate]);
 
   useEffect(() => {
-    if (freshObjectiveData.programs && Array.isArray(freshObjectiveData.programs)) {
-      console.log(`Checking ${freshObjectiveData.programs.length} programs for additional initiatives`);
-      // ...freshObjectiveData, // Use fresh data with current planner_weight
-      if (organizationsData) {
-        id: freshObjectiveData.id,
-        title: freshObjectiveData.title,
-        description: freshObjectiveData.description,
-        weight: freshObjectiveData.weight, // Original system weight
-        planner_weight: freshObjectiveData.planner_weight, // Planner's selected weight
-        effective_weight: plannerSelectedWeight, // The weight to actually use
-        return;
-      }
+    if (planData) {
+      setProcessedPlanData(planData);
       
-      if (planData.organization) {
-        const org = Array.isArray(organizationsData) 
-          ? organizationsData.find(o => o.id.toString() === planData.organization.toString())
-          : organizationsData.data?.find(o => o.id.toString() === planData.organization.toString());
-        
-        if (org) {
-          setOrganizationName(org.name);
-          return;
+      if (organizationsData) {
+        try {
+          if (planData.organizationName) {
+            setOrganizationName(planData.organizationName);
+            return;
+          }
+          
+          if (planData.organization) {
+            const org = Array.isArray(organizationsData) 
+              ? organizationsData.find(o => o.id.toString() === planData.organization.toString())
+              : organizationsData.data?.find(o => o.id.toString() === planData.organization.toString());
+            
+            if (org) {
+              setOrganizationName(org.name);
+              return;
+            }
+          }
+          
+          setOrganizationName('Unknown Organization');
+        } catch (e) {
+          setOrganizationName('Unknown Organization');
         }
       }
-      
-      setOrganizationName('Unknown Organization');
-    } catch (e) {
-      setOrganizationName('Unknown Organization');
     }
   }, [planData, organizationsData]);
 
