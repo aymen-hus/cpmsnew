@@ -70,94 +70,112 @@ const PlanSummary: React.FC = () => {
       setIsLoadingObjectives(true);
       setError(null);
       
-      console.log('=== SIMPLE FETCH: Loading all objectives for plan ===');
+      console.log('=== FETCHING ALL SELECTED OBJECTIVES FOR PLAN ===');
       
-      // Step 1: Get selected objectives for this plan
-      let selectedObjectiveIds: string[] = [];
+      // Step 1: Get ALL selected objectives for this plan
+      let allObjectiveIds: string[] = [];
       
-      // Get main strategic objective
-      if (planData?.strategic_objective) {
-        selectedObjectiveIds.push(String(planData.strategic_objective));
+      // First, try to get selected_objectives (multiple objectives)
+      if (planData?.selected_objectives && Array.isArray(planData.selected_objectives) && planData.selected_objectives.length > 0) {
+        // Plan has multiple selected objectives
+        allObjectiveIds = planData.selected_objectives.map((obj: any) => String(obj.id || obj));
+        console.log('Found multiple selected objectives:', allObjectiveIds);
+      } else if (planData?.strategic_objective) {
+        // Fallback to single strategic objective
+        allObjectiveIds = [String(planData.strategic_objective)];
+        console.log('Using single strategic objective:', allObjectiveIds);
       }
       
-      // Get additional selected objectives
-      if (planData?.selected_objectives && Array.isArray(planData.selected_objectives)) {
-        const additionalIds = planData.selected_objectives.map((obj: any) => String(obj.id || obj));
-        selectedObjectiveIds = [...selectedObjectiveIds, ...additionalIds];
-      }
+      // Remove duplicates and validate
+      allObjectiveIds = [...new Set(allObjectiveIds)].filter(id => id && id !== 'null' && id !== 'undefined');
       
-      // Remove duplicates
-      selectedObjectiveIds = [...new Set(selectedObjectiveIds)];
-      
-      console.log('Selected objective IDs:', selectedObjectiveIds);
-      
-      if (selectedObjectiveIds.length === 0) {
+      if (allObjectiveIds.length === 0) {
         console.log('No objectives found for this plan');
         setPlanObjectives([]);
         return;
       }
       
-      // Step 2: Fetch all objectives from system
-      const allObjectivesResponse = await objectives.getAll();
-      const allObjectives = allObjectivesResponse?.data || [];
+      console.log(`Processing ${allObjectiveIds.length} objectives:`, allObjectiveIds);
       
-      // Step 3: Filter to get only selected objectives
-      const selectedObjectives = allObjectives.filter((obj: any) => 
-        selectedObjectiveIds.includes(String(obj.id))
+      // Step 2: Fetch ALL objectives from system
+      const allObjectivesResponse = await objectives.getAll();
+      const systemObjectives = allObjectivesResponse?.data || [];
+      
+      if (!Array.isArray(systemObjectives)) {
+        console.error('Invalid objectives data from system');
+        setPlanObjectives([]);
+        return;
+      }
+      
+      console.log(`System has ${systemObjectives.length} total objectives`);
+      
+      // Step 3: Filter to get only the objectives for this plan
+      const planObjectives = systemObjectives.filter((obj: any) => 
+        allObjectiveIds.includes(String(obj.id))
       );
       
-      console.log(`Found ${selectedObjectives.length} selected objectives`);
+      console.log(`Found ${planObjectives.length} matching objectives for this plan`);
       
-      // Step 4: For each objective, get its initiatives and data
-      const enrichedObjectives = [];
+      // Step 4: For each objective, get ALL its data (initiatives, measures, activities)
+      const finalObjectives = [];
       
-      for (const objective of selectedObjectives) {
+      for (const objective of planObjectives) {
         console.log(`Processing objective: ${objective.title}`);
         
-        // Get initiatives for this objective
+        // Get ALL initiatives for this objective
         const initiativesResponse = await initiatives.getByObjective(objective.id);
-        const objectiveInitiatives = initiativesResponse?.data || [];
+        const allInitiatives = initiativesResponse?.data || [];
         
-        console.log(`Found ${objectiveInitiatives.length} initiatives for objective ${objective.id}`);
+        console.log(`Found ${allInitiatives.length} initiatives for objective ${objective.id}`);
         
-        // For each initiative, get measures and activities
-        const enrichedInitiatives = [];
+        // For each initiative, get ALL measures and activities
+        const completeInitiatives = [];
         
-        for (const initiative of objectiveInitiatives) {
+        for (const initiative of allInitiatives) {
           console.log(`Processing initiative: ${initiative.name}`);
           
-          // Get performance measures
+          // Get ALL performance measures for this initiative
           const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
-          const measures = measuresResponse?.data || [];
+          const allMeasures = measuresResponse?.data || [];
           
-          // Get main activities
+          // Get ALL main activities for this initiative
           const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
-          const activities = activitiesResponse?.data || [];
+          const allActivities = activitiesResponse?.data || [];
           
-          console.log(`Initiative ${initiative.name}: ${measures.length} measures, ${activities.length} activities`);
+          console.log(`Initiative ${initiative.name}: ${allMeasures.length} measures, ${allActivities.length} activities`);
           
-          enrichedInitiatives.push({
+          // Add complete initiative with all its data
+          completeInitiatives.push({
             ...initiative,
-            performance_measures: measures,
-            main_activities: activities
+            performance_measures: allMeasures,
+            main_activities: allActivities
           });
         }
         
-        enrichedObjectives.push({
+        // Add complete objective with all its initiatives
+        finalObjectives.push({
           ...objective,
-          effective_weight: objective.planner_weight || objective.weight,
-          initiatives: enrichedInitiatives
+          effective_weight: objective.planner_weight || objective.weight, // Use planner weight if available
+          initiatives: completeInitiatives
         });
         
-        console.log(`Completed objective: ${objective.title} with ${enrichedInitiatives.length} initiatives`);
+        console.log(`Completed objective: ${objective.title} with ${completeInitiatives.length} initiatives`);
       }
       
-      console.log(`=== SIMPLE FETCH COMPLETE: ${enrichedObjectives.length} objectives processed ===`);
-      setPlanObjectives(enrichedObjectives);
+      console.log(`=== FETCH COMPLETE: ${finalObjectives.length} objectives with complete data ===`);
+      
+      // Log summary of what we're setting
+      finalObjectives.forEach((obj, index) => {
+        const totalMeasures = obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0;
+        const totalActivities = obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0;
+        console.log(`Objective ${index + 1}: ${obj.title} - ${obj.initiatives?.length || 0} initiatives, ${totalMeasures} measures, ${totalActivities} activities`);
+      });
+      
+      setPlanObjectives(finalObjectives);
       
     } catch (error) {
-      console.error('Error fetching objectives data:', error);
-      setError('Failed to load plan data. Please try again.');
+      console.error('Error fetching all objectives data:', error);
+      setError('Failed to load complete plan data. Please try again.');
       setPlanObjectives([]);
     } finally {
       setIsLoadingObjectives(false);
