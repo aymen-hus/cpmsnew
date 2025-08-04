@@ -96,6 +96,120 @@ const PlanSummary: React.FC = () => {
     }
   };
 
+  // Comprehensive data fetching function
+  const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
+    if (!objectivesList || !objectivesList.length) {
+      console.log('No objectives provided to fetch data for');
+      return [];
+    }
+
+    try {
+      console.log('=== ENRICHING PLAN-SPECIFIC OBJECTIVES (PRESERVING WEIGHTS) ===');
+      console.log(`Processing ${objectivesList.length} objectives:`, objectivesList.map(obj => `${obj.id}: ${obj.title}`));
+      
+      const enrichedObjectives = await Promise.all(
+        objectivesList.map(async (objective) => {
+          try {
+            console.log(`\n--- Processing Objective: ${objective.title} (ID: ${objective.id}) ---`);
+            console.log(`PRESERVING plan-specific weight for ${objective.id}:`, {
+              weight: objective.weight,
+              planner_weight: objective.planner_weight,
+              effective_weight: objective.effective_weight
+            });
+            
+            // CRITICAL: Use the objective data AS-IS from the plan
+            // DO NOT fetch fresh objective data as it will overwrite plan-specific weights
+            
+            // Get ALL initiatives for this objective
+            const directInitiativesResponse = await initiatives.getByObjective(objective.id.toString());
+            let allObjectiveInitiatives = directInitiativesResponse?.data || [];
+            console.log(`Found ${allObjectiveInitiatives.length} initiatives`);
+            
+            // Also check programs if objective has them
+            if (objective.programs && Array.isArray(objective.programs)) {
+              console.log(`Checking ${objective.programs.length} programs for additional initiatives`);
+              for (const program of objective.programs) {
+                try {
+                  const programInitiativesResponse = await initiatives.getByProgram(program.id.toString());
+                  const programInitiatives = programInitiativesResponse?.data || [];
+                  console.log(`Program ${program.id}: ${programInitiatives.length} initiatives`);
+                  
+                  // Add program initiatives (avoid duplicates)
+                  programInitiatives.forEach(programInitiative => {
+                    if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
+                      allObjectiveInitiatives.push(programInitiative);
+                    }
+                  });
+                } catch (programError) {
+                  console.warn(`Error fetching initiatives for program ${program.id}:`, programError);
+                }
+              }
+            }
+            
+            console.log(`Total initiatives for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
+
+            // Filter initiatives based on organization for this plan
+            const filteredInitiatives = allObjectiveInitiatives;
+            console.log(`Using ${filteredInitiatives.length} initiatives`);
+
+            // For each initiative, fetch performance measures and main activities
+            const enrichedInitiatives = await Promise.all(
+              filteredInitiatives.map(async (initiative) => {
+                try {
+                  console.log(`  Processing initiative: ${initiative.name} (ID: ${initiative.id})`);
+                  
+                  // Fetch performance measures
+                  const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
+                  const allMeasures = measuresResponse?.data || [];
+                  console.log(`    Found ${allMeasures.length} performance measures`);
+
+                  // Fetch main activities
+                  const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
+                  const allActivities = activitiesResponse?.data || [];
+                  console.log(`    Found ${allActivities.length} main activities`);
+
+                  // Use measures and activities as-is
+                  const filteredMeasures = allMeasures;
+                  const filteredActivities = allActivities;
+                  
+                  console.log(`    Using ${filteredMeasures.length} measures and ${filteredActivities.length} activities`);
+
+                  return {
+                    ...initiative,
+                    performance_measures: filteredMeasures,
+                    main_activities: filteredActivities
+                  };
+                } catch (error) {
+                  console.warn(`Error fetching data for initiative ${initiative.id}:`, error);
+                  return {
+                    ...initiative,
+                    performance_measures: [],
+                    main_activities: []
+                  };
+                }
+              })
+            );
+
+            // CRITICAL: Return the objective exactly as it came from the plan data
+            // This preserves the plan-specific weights that were selected by the planner
+            console.log(`Returning objective ${objective.id} with ORIGINAL plan weights preserved`);
+
+            console.log(`Objective ${objective.id} completed: ${enrichedInitiatives.length} enriched initiatives`);
+
+            return {
+              ...objective, // Keep ALL original plan-specific data
+              initiatives: enrichedInitiatives
+            };
+          } catch (error) {
+            console.warn(`Error processing objective ${objective.id}:`, error);
+            return {
+              ...objective,
+              initiatives: []
+            };
+          }
+        })
+      );
+
   // Fetch plan data
   const { data: planData, isLoading, error: planError } = useQuery({
     queryKey: ['plan', planId],
