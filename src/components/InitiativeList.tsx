@@ -160,6 +160,11 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
     ? Math.abs(total_initiatives_weight - parentWeight) < 0.01 
     : total_initiatives_weight <= parentWeight;
 
+  // For objectives, check if we can add more initiatives (total must equal parent weight exactly)
+  const canAddInitiative = parentType === 'objective' 
+    ? Math.abs(total_initiatives_weight - parentWeight) > 0.01 && total_initiatives_weight < parentWeight
+    : total_initiatives_weight < parentWeight;
+
   // Group initiatives by default vs custom
   const defaultInitiatives = initiativesList.data.filter(i => i.is_default);
   // Filter custom initiatives to only show those belonging to the user's organization or default ones
@@ -174,6 +179,7 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
     total_initiatives_weight,
     remaining_weight,
     is_valid,
+    canAddInitiative,
     filteredInitiativesCount: filteredInitiatives.length
   });
 
@@ -284,6 +290,7 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
             <p className="text-sm">
               Total weight must equal exactly {parentWeight}%. 
               Current total: {total_initiatives_weight.toFixed(1)}%
+              Need {remaining_weight.toFixed(1)}% more to enable saving.
             </p>
           </div>
         )}
@@ -293,20 +300,34 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
             <CheckCircle className="h-5 w-5" />
             <p className="text-sm">
               {parentType === 'objective' 
-                ? `Weight distribution is balanced at exactly ${parentWeight}%` 
+                ? `Weight distribution is balanced at exactly ${parentWeight}% - Ready to save!` 
                 : 'Weight distribution is valid'}
             </p>
           </div>
         )}
 
+        {/* Show different validation message when can't add more initiatives */}
+        {!canAddInitiative && remaining_weight === 0 && parentType === 'objective' && (
+          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-md flex items-center gap-2 text-green-700">
+            <CheckCircle className="h-5 w-5" />
+            <p className="text-sm">
+              Perfect! Total weight equals {parentWeight}%. No more initiatives can be added.
+            </p>
+          </div>
+        )}
         {isUserPlanner && (
           <div className="mt-4">
             <button
               onClick={() => validateInitiativesMutation.mutate()}
-              disabled={validateInitiativesMutation.isPending || isLoadingSummary}
+              disabled={validateInitiativesMutation.isPending || isLoadingSummary || !is_valid}
               className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              {validateInitiativesMutation.isPending ? 'Validating...' : 'Validate Initiatives Weight'}
+              {validateInitiativesMutation.isPending 
+                ? 'Validating...' 
+                : !is_valid 
+                  ? `Complete Weight Distribution First (${total_initiatives_weight.toFixed(1)}%/${parentWeight}%)`
+                  : 'Validate & Save Initiatives Weight'
+              }
             </button>
             
             {validateInitiativesMutation.isError && (
@@ -489,11 +510,30 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
         <div className="mt-4 text-center">
           <button 
             onClick={() => onEditInitiative({})}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
+            disabled={!canAddInitiative}
+            className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md transition-colors ${
+              canAddInitiative 
+                ? 'text-white bg-green-600 hover:bg-green-700' 
+                : 'text-gray-400 bg-gray-300 cursor-not-allowed'
+            }`}
           >
             <PlusCircle className="h-4 w-4 mr-2" />
-            {initiativesList.data.length === 0 ? 'Create First Initiative' : 'Create New Initiative'}
+            {!canAddInitiative 
+              ? (total_initiatives_weight >= parentWeight 
+                  ? `Weight Complete (${total_initiatives_weight.toFixed(1)}%/${parentWeight}%)` 
+                  : 'Weight Distribution Complete')
+              : (initiativesList.data.length === 0 ? 'Create First Initiative' : 'Create New Initiative')
+            }
           </button>
+          
+          {!canAddInitiative && (
+            <p className="mt-2 text-xs text-gray-500">
+              {parentType === 'objective' 
+                ? `Objective weight (${parentWeight}%) ${total_initiatives_weight >= parentWeight ? 'is fully allocated' : 'target reached'}. Use "Validate & Save" above.`
+                : 'Maximum weight reached for this program.'
+              }
+            </p>
+          )}
         </div>
       )}
     </div>
