@@ -70,9 +70,9 @@ const PlanSummary: React.FC = () => {
       setIsLoadingObjectives(true);
       setError(null);
       
-      console.log('=== FETCHING ALL SELECTED OBJECTIVES FOR PLAN ===');
+      console.log('=== FETCHING ALL SELECTED OBJECTIVES FOR PLAN (ADMIN MODE) ===');
       
-      // Step 1: Get ALL selected objectives for this plan
+      // Step 1: Get ALL selected objectives for this plan (no organization filtering for admins)
       let allObjectiveIds: string[] = [];
       
       // First, try to get selected_objectives (multiple objectives)
@@ -117,6 +117,7 @@ const PlanSummary: React.FC = () => {
       console.log(`Found ${planObjectives.length} matching objectives for this plan`);
       
       // Step 4: For each objective, get ALL its data (initiatives, measures, activities)
+      // ADMIN MODE: No organization filtering - get ALL data
       const finalObjectives = [];
       
       for (const objective of planObjectives) {
@@ -129,6 +130,7 @@ const PlanSummary: React.FC = () => {
         console.log(`Found ${allInitiatives.length} initiatives for objective ${objective.id}`);
         
         // For each initiative, get ALL measures and activities
+        // ADMIN MODE: No filtering by organization
         const completeInitiatives = [];
         
         for (const initiative of allInitiatives) {
@@ -162,7 +164,7 @@ const PlanSummary: React.FC = () => {
         console.log(`Completed objective: ${objective.title} with ${completeInitiatives.length} initiatives`);
       }
       
-      console.log(`=== FETCH COMPLETE: ${finalObjectives.length} objectives with complete data ===`);
+      console.log(`=== ADMIN FETCH COMPLETE: ${finalObjectives.length} objectives with complete data ===`);
       
       // Log summary of what we're setting
       finalObjectives.forEach((obj, index) => {
