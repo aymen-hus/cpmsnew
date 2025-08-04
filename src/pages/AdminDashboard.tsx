@@ -200,6 +200,24 @@ const AdminDashboard: React.FC = () => {
           partnersBudget: 0,
           otherBudget: 0,
           approvedPlans: 0,
+          submittedPlans: 0,
+          draftPlans: 0,
+          rejectedPlans: 0
+        };
+      }
+
+      orgStats[orgName].planCount++;
+
+      // Calculate budget for this plan
+      const planBudget = calculatePlanBudget(plan);
+      orgStats[orgName].totalBudget += planBudget.totalBudget;
+      orgStats[orgName].availableFunding += planBudget.availableFunding;
+      orgStats[orgName].fundingGap += planBudget.fundingGap;
+      orgStats[orgName].governmentBudget += planBudget.governmentBudget;
+      orgStats[orgName].sdgBudget += planBudget.sdgBudget;
+      orgStats[orgName].partnersBudget += planBudget.partnersBudget;
+      orgStats[orgName].otherBudget += planBudget.otherBudget;
+
       // Count plans by status per organization
       switch (plan.status) {
         case 'DRAFT': orgStats[orgName].draftPlans++; break;
@@ -207,7 +225,6 @@ const AdminDashboard: React.FC = () => {
         case 'APPROVED': orgStats[orgName].approvedPlans++; break;
         case 'REJECTED': orgStats[orgName].rejectedPlans++; break;
       }
-    });
     });
 
     // Calculate totals across all organizations
@@ -569,6 +586,9 @@ const AdminDashboard: React.FC = () => {
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Partners Budget
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Other Budget
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Funding Gap
