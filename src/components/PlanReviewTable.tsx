@@ -676,19 +676,12 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                // Get the planner's selected weight (this is what the planner chose during plan creation)
-                const displayWeight = objective.planner_weight !== undefined && objective.planner_weight !== null 
-                  ? Number(objective.planner_weight).toFixed(1)
+                // Always prioritize planner's selected weight first
+                const plannerWeight = objective.planner_weight !== undefined && objective.planner_weight !== null 
+                  ? objective.planner_weight 
                   : objective.effective_weight !== undefined 
-                    ? Number(objective.effective_weight).toFixed(1)
-                    : Number(objective.weight).toFixed(1);
-                    
-                console.log(`Objective ${objective.id} (${objective.title}) weight display:`, {
-                  planner_weight: objective.planner_weight,
-                  effective_weight: objective.effective_weight,
-                  original_weight: objective.weight,
-                  displaying: displayWeight
-                });
+                    ? objective.effective_weight
+                    : objective.weight;
                 let objectiveRowSpan = 0;
                 
                 // Calculate total rows for this objective
@@ -710,7 +703,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                     <tr key={`obj-${objective.id}-empty`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{objIndex + 1}</td>
                       <td className="px-6 py-4 text-sm text-gray-900">{objective.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{displayWeight}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{plannerWeight}%</td>
                       <td className="px-6 py-4 text-sm text-gray-500 italic">No initiatives</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
                       <td className="px-6 py-4 text-sm text-gray-500">-</td>
@@ -755,7 +748,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                 )}
                               </td>
                               <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
-                                {displayWeight}%
+                                {plannerWeight}%
                               </td>
                             </>
                           )}
@@ -829,7 +822,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                   )}
                                 </td>
                                 <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
-                                  {displayWeight}%
+                                  {plannerWeight}%
                                 </td>
                               </>
                             )}
