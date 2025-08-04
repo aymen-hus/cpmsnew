@@ -1,20 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { plans, auth, initiatives, performanceMeasures, mainActivities } from '../lib/api';
+import { plans, auth } from '../lib/api';
 import { ArrowLeft, Loader, AlertCircle, Eye, FileSpreadsheet, Calendar, User, Building2, Target } from 'lucide-react';
 import PlanReviewTable from '../components/PlanReviewTable';
 import { format } from 'date-fns';
-
-interface StrategicObjective {
-  id: number;
-  title: string;
-  weight?: number;
-  planner_weight?: number;
-  effective_weight?: number;
-  programs?: any[];
-  initiatives?: any[];
-}
 
 const PlanSummary: React.FC = () => {
   const { planId } = useParams<{ planId: string }>();
@@ -73,9 +63,17 @@ const PlanSummary: React.FC = () => {
           effective_weight: objective.effective_weight
         });
         
-        // PRESERVE THE PLAN-SPECIFIC WEIGHT (this is what the planner selected for THIS plan)
-        // Don't overwrite with fresh data - use what was saved with the plan
-        console.log(`Preserving plan-specific weight for objective ${objective.id}: ${objective.effective_weight || objective.planner_weight || objective.weight}`);
+        // Ensure the objective has the correct weight for this plan
+        // The weight in the plan data should be the planner's selected weight
+        if (objective.planner_weight !== undefined && objective.planner_weight !== null) {
+          objective.effective_weight = objective.planner_weight;
+          console.log(`Using planner_weight ${objective.planner_weight} for objective ${objective.id}`);
+        } else if (objective.effective_weight !== undefined) {
+          console.log(`Using effective_weight ${objective.effective_weight} for objective ${objective.id}`);
+        } else {
+          objective.effective_weight = objective.weight;
+          console.log(`Using original weight ${objective.weight} for objective ${objective.id}`);
+        }
         
         objective.initiatives = Array.isArray(objective.initiatives) 
           ? objective.initiatives 
@@ -103,127 +101,6 @@ const PlanSummary: React.FC = () => {
     } catch (error) {
       console.error('Error normalizing plan data:', error);
       return plan;
-    }
-  };
-
-  // Comprehensive data fetching function
-  const fetchCompleteObjectiveData = async (objectivesList: StrategicObjective[]) => {
-    if (!objectivesList || !objectivesList.length) {
-      console.log('No objectives provided to fetch data for');
-      return [];
-    }
-
-    try {
-      console.log('=== ENRICHING PLAN-SPECIFIC OBJECTIVES (PRESERVING WEIGHTS) ===');
-      console.log(`Processing ${objectivesList.length} objectives:`, objectivesList.map(obj => `${obj.id}: ${obj.title}`));
-      
-      const enrichedObjectives = await Promise.all(
-        objectivesList.map(async (objective) => {
-          try {
-            console.log(`\n--- Processing Objective: ${objective.title} (ID: ${objective.id}) ---`);
-            console.log(`PRESERVING plan-specific weight for ${objective.id}:`, {
-              weight: objective.weight,
-              planner_weight: objective.planner_weight,
-              effective_weight: objective.effective_weight
-            });
-            
-            // CRITICAL: Use the objective data AS-IS from the plan
-            // DO NOT fetch fresh objective data as it will overwrite plan-specific weights
-            
-            // Get ALL initiatives for this objective
-            const directInitiativesResponse = await initiatives.getByObjective(objective.id.toString());
-            let allObjectiveInitiatives = directInitiativesResponse?.data || [];
-            console.log(`Found ${allObjectiveInitiatives.length} initiatives`);
-            
-            // Also check programs if objective has them
-            if (objective.programs && Array.isArray(objective.programs)) {
-              console.log(`Checking ${objective.programs.length} programs for additional initiatives`);
-              for (const program of objective.programs) {
-                try {
-                  const programInitiativesResponse = await initiatives.getByProgram(program.id.toString());
-                  const programInitiatives = programInitiativesResponse?.data || [];
-                  console.log(`Program ${program.id}: ${programInitiatives.length} initiatives`);
-                  
-                  // Add program initiatives (avoid duplicates)
-                  programInitiatives.forEach(programInitiative => {
-                    if (!allObjectiveInitiatives.find(existing => existing.id === programInitiative.id)) {
-                      allObjectiveInitiatives.push(programInitiative);
-                    }
-                  });
-                } catch (programError) {
-                  console.warn(`Error fetching initiatives for program ${program.id}:`, programError);
-                }
-              }
-            }
-            
-            console.log(`Total initiatives for objective ${objective.id}: ${allObjectiveInitiatives.length}`);
-
-            // Filter initiatives based on organization for this plan
-            const filteredInitiatives = allObjectiveInitiatives;
-            console.log(`Using ${filteredInitiatives.length} initiatives`);
-
-            // For each initiative, fetch performance measures and main activities
-            const enrichedInitiatives = await Promise.all(
-              filteredInitiatives.map(async (initiative) => {
-                try {
-                  console.log(`  Processing initiative: ${initiative.name} (ID: ${initiative.id})`);
-                  
-                  // Fetch performance measures
-                  const measuresResponse = await performanceMeasures.getByInitiative(initiative.id);
-                  const allMeasures = measuresResponse?.data || [];
-                  console.log(`    Found ${allMeasures.length} performance measures`);
-
-                  // Fetch main activities
-                  const activitiesResponse = await mainActivities.getByInitiative(initiative.id);
-                  const allActivities = activitiesResponse?.data || [];
-                  console.log(`    Found ${allActivities.length} main activities`);
-
-                  // Use measures and activities as-is
-                  const filteredMeasures = allMeasures;
-                  const filteredActivities = allActivities;
-                  
-                  console.log(`    Using ${filteredMeasures.length} measures and ${filteredActivities.length} activities`);
-
-                  return {
-                    ...initiative,
-                    performance_measures: filteredMeasures,
-                    main_activities: filteredActivities
-                  };
-                } catch (error) {
-                  console.warn(`Error fetching data for initiative ${initiative.id}:`, error);
-                  return {
-                    ...initiative,
-                    performance_measures: [],
-                    main_activities: []
-                  };
-                }
-              })
-            );
-
-            // CRITICAL: Return the objective exactly as it came from the plan data
-            // This preserves the plan-specific weights that were selected by the planner
-            console.log(`Returning objective ${objective.id} with ORIGINAL plan weights preserved`);
-
-            console.log(`Objective ${objective.id} completed: ${enrichedInitiatives.length} enriched initiatives`);
-
-            return {
-              ...objective, // Keep ALL original plan-specific data
-              initiatives: enrichedInitiatives
-            };
-          } catch (error) {
-            console.warn(`Error processing objective ${objective.id}:`, error);
-            return {
-              ...objective,
-              initiatives: []
-            };
-          }
-        })
-      );
-
-      return enrichedObjectives;
-    } catch (error) {
-      console.error('Error in fetchCompleteObjectiveData:', error);
-      return objectivesList;
     }
   };
 

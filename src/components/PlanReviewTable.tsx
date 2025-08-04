@@ -676,29 +676,21 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {processedObjectives.map((objective, objIndex) => {
-                // Use the weight that was saved with THIS specific plan
-                // This is the weight the planner selected when creating this plan
-                let planSpecificWeight = objective.weight; // Default fallback
-                
-                // Check for plan-specific weight in different fields
-                if (objective.effective_weight !== undefined && objective.effective_weight !== null) {
-                  planSpecificWeight = objective.effective_weight;
-                  console.log(`Using effective_weight for obj ${objective.id}: ${objective.effective_weight}`);
-                } else if (objective.planner_weight !== undefined && objective.planner_weight !== null) {
-                  planSpecificWeight = objective.planner_weight;
-                  console.log(`Using planner_weight for obj ${objective.id}: ${objective.planner_weight}`);
-                } else {
-                  console.log(`Using original weight for obj ${objective.id}: ${objective.weight}`);
-                }
+                // ALWAYS use effective_weight first (this contains the plan-specific weight)
+                const plannerSelectedWeight = objective.effective_weight !== undefined 
+                  ? objective.effective_weight
+                  : (objective.planner_weight !== undefined && objective.planner_weight !== null) 
+                    ? objective.planner_weight 
+                    : objective.weight;
                   
-                const displayWeight = Number(planSpecificWeight).toFixed(1);
+                const displayWeight = Number(plannerSelectedWeight).toFixed(1);
                     
                 console.log(`Objective ${objective.id} (${objective.title}) weight display:`, {
-                  plan_id: 'From plan data',
+                  from_plan_data: 'YES - Using plan-specific data',
                   planner_weight: objective.planner_weight,
                   effective_weight: objective.effective_weight,
                   original_weight: objective.weight,
-                  plan_specific_weight: planSpecificWeight,
+                  planner_selected: plannerSelectedWeight,
                   displaying: displayWeight
                 });
 
