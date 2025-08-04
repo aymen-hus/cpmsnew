@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, Building2, CheckCircle, XCircle, AlertCircle, Loader, Eye, Users, Calendar, LayoutGrid } from 'lucide-react';
+import { BarChart3, Building2, CheckCircle, XCircle, AlertCircle, Loader, Eye, Users, Calendar, LayoutGrid, DollarSign, TrendingUp, PieChart } from 'lucide-react';
 import { plans, organizations, auth } from '../lib/api';
 import { format } from 'date-fns';
 import { isAdmin } from '../types/user';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
+
+// Register Chart.js components
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -92,17 +97,23 @@ const AdminDashboard: React.FC = () => {
         submittedPlans: 0,
         approvedPlans: 0,
         rejectedPlans: 0,
-        organizationStats: {}
+        organizationStats: {},
+        totalBudgetAllOrgs: 0,
+        totalFundingAllOrgs: 0,
+        totalGapAllOrgs: 0
       };
     }
 
     const stats = {
-      totalPlans: allPlansData.length,
+      totalPlans: 0, // Will count only submitted and approved
       draftPlans: 0,
       submittedPlans: 0,
       approvedPlans: 0,
       rejectedPlans: 0,
-      organizationStats: {} as Record<string, any>
+      organizationStats: {} as Record<string, any>,
+      totalBudgetAllOrgs: 0,
+      totalFundingAllOrgs: 0,
+      totalGapAllOrgs: 0
     };
 
     // Organization statistics with unique budget values
@@ -114,6 +125,8 @@ const AdminDashboard: React.FC = () => {
         case 'DRAFT': stats.draftPlans++; break;
         case 'SUBMITTED': stats.submittedPlans++; break;
         case 'APPROVED': stats.approvedPlans++; break;
+          stats.totalPlans++; // Only count submitted and approved
+          stats.totalPlans++; // Only count submitted and approved
         case 'REJECTED': stats.rejectedPlans++; break;
       }
 
@@ -149,6 +162,13 @@ const AdminDashboard: React.FC = () => {
         case 'APPROVED': orgStats[orgName].approvedPlans++; break;
         case 'REJECTED': orgStats[orgName].rejectedPlans++; break;
       }
+    });
+
+    // Calculate totals across all organizations
+    Object.values(orgStats).forEach((orgData: any) => {
+      stats.totalBudgetAllOrgs += orgData.totalBudget;
+      stats.totalFundingAllOrgs += orgData.availableFunding;
+      stats.totalGapAllOrgs += orgData.fundingGap;
     });
 
     stats.organizationStats = orgStats;
@@ -229,10 +249,11 @@ const AdminDashboard: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-medium text-gray-500">Total Plans</h3>
+            <h3 className="text-sm font-medium text-gray-500">Active Plans</h3>
             <LayoutGrid className="h-5 w-5 text-blue-500" />
           </div>
           <p className="text-3xl font-semibold text-blue-600">{stats.totalPlans}</p>
+          <p className="text-xs text-gray-500 mt-1">Submitted + Approved</p>
         </div>
 
         <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
@@ -257,6 +278,119 @@ const AdminDashboard: React.FC = () => {
             <XCircle className="h-5 w-5 text-red-500" />
           </div>
           <p className="text-3xl font-semibold text-red-600">{stats.rejectedPlans}</p>
+        </div>
+      </div>
+
+      {/* Budget Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-medium text-gray-500">Total Budget (All Orgs)</h3>
+            <DollarSign className="h-5 w-5 text-purple-500" />
+          </div>
+          <p className="text-3xl font-semibold text-purple-600">${stats.totalBudgetAllOrgs.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">Across all organizations</p>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-medium text-gray-500">Available Funding</h3>
+            <TrendingUp className="h-5 w-5 text-green-500" />
+          </div>
+          <p className="text-3xl font-semibold text-green-600">${stats.totalFundingAllOrgs.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">Total available funds</p>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-medium text-gray-500">Funding Gap</h3>
+            <AlertCircle className="h-5 w-5 text-red-500" />
+          </div>
+          <p className="text-3xl font-semibold text-red-600">${stats.totalGapAllOrgs.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">Total funding needed</p>
+        </div>
+      </div>
+
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Plan Status Chart */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+            <PieChart className="h-5 w-5 mr-2 text-blue-500" />
+            Plan Status Distribution
+          </h3>
+          <div className="h-64">
+            <Doughnut
+              data={{
+                labels: ['Approved', 'Submitted', 'Draft', 'Rejected'],
+                datasets: [{
+                  data: [stats.approvedPlans, stats.submittedPlans, stats.draftPlans, stats.rejectedPlans],
+                  backgroundColor: ['#10b981', '#f59e0b', '#6b7280', '#ef4444'],
+                  borderWidth: 2,
+                  borderColor: '#ffffff'
+                }]
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    position: 'bottom'
+                  }
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Budget by Organization Chart */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+            <BarChart3 className="h-5 w-5 mr-2 text-purple-500" />
+            Budget by Organization
+          </h3>
+          <div className="h-64">
+            <Bar
+              data={{
+                labels: Object.keys(stats.organizationStats).slice(0, 6), // Show top 6 orgs
+                datasets: [
+                  {
+                    label: 'Total Budget',
+                    data: Object.values(stats.organizationStats).slice(0, 6).map((org: any) => org.totalBudget),
+                    backgroundColor: '#8b5cf6',
+                    borderColor: '#7c3aed',
+                    borderWidth: 1
+                  },
+                  {
+                    label: 'Available Funding',
+                    data: Object.values(stats.organizationStats).slice(0, 6).map((org: any) => org.availableFunding),
+                    backgroundColor: '#10b981',
+                    borderColor: '#059669',
+                    borderWidth: 1
+                  }
+                ]
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    position: 'top'
+                  }
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    ticks: {
+                      callback: function(value) {
+                        return '$' + (value as number).toLocaleString();
+                      }
+                    }
+                  }
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
 
