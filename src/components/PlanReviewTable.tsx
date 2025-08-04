@@ -333,6 +333,32 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     let isMounted = true;
 
     const loadData = async () => {
+      // If this is preview mode or view only, use the objectives directly without refetching
+      if (isPreviewMode || isViewOnly) {
+        console.log('Preview/View mode: Using provided objectives directly');
+        console.log('Provided objectives:', objectives?.length || 0);
+        
+        if (objectives && objectives.length > 0) {
+          // Log the structure of provided objectives
+          objectives.forEach((obj, index) => {
+            const initiativesCount = obj.initiatives?.length || 0;
+            const measuresCount = obj.initiatives?.reduce((sum, init) => sum + (init.performance_measures?.length || 0), 0) || 0;
+            const activitiesCount = obj.initiatives?.reduce((sum, init) => sum + (init.main_activities?.length || 0), 0) || 0;
+            console.log(`Table Objective ${index + 1}: ${obj.title} - ${initiativesCount} initiatives, ${measuresCount} measures, ${activitiesCount} activities`);
+          });
+          
+          setProcessedObjectives(objectives);
+          setIsLoading(false);
+          return;
+        } else {
+          console.log('No objectives provided for table view');
+          setProcessedObjectives([]);
+          setIsLoading(false);
+          return;
+        }
+      }
+      
+      // Only fetch data if not in preview/view mode
       if (!objectives || objectives.length === 0) {
         setProcessedObjectives([]);
         setIsLoading(false);
@@ -377,7 +403,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [objectives, userOrgId, retryCount]);
+  }, [objectives, userOrgId, retryCount, isPreviewMode, isViewOnly]);</anoltAction>
 
   const handleRetry = () => {
     setRetryCount(prev => prev + 1);

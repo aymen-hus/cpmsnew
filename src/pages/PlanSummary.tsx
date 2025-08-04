@@ -526,7 +526,7 @@ const PlanSummary: React.FC = () => {
               </div>
               <div className="p-6">
                 <PlanReviewTable
-                  objectives={processedPlanData.objectives}
+                  objectives={processedPlanData.objectives || []}
                   onSubmit={async () => {}}
                   isSubmitting={false}
                   organizationName={organizationName}
