@@ -146,6 +146,9 @@ const AdminDashboard: React.FC = () => {
           totalBudget: baseMultiplier * 10000,
           availableFunding: baseMultiplier * 7500,
           fundingGap: baseMultiplier * 2500,
+          governmentBudget: baseMultiplier * 4000,
+          sdgBudget: baseMultiplier * 2000,
+          partnersBudget: baseMultiplier * 1500,
           approvedPlans: 0,
           submittedPlans: 0,
           draftPlans: 0,
@@ -158,8 +161,14 @@ const AdminDashboard: React.FC = () => {
       // Count plans by status per organization
       switch (plan.status) {
         case 'DRAFT': orgStats[orgName].draftPlans++; break;
-        case 'SUBMITTED': orgStats[orgName].submittedPlans++; break;
-        case 'APPROVED': orgStats[orgName].approvedPlans++; break;
+        case 'SUBMITTED': 
+          orgStats[orgName].submittedPlans++; 
+          stats.totalPlans++; // Count submitted plans for active total
+          break;
+        case 'APPROVED': 
+          orgStats[orgName].approvedPlans++; 
+          stats.totalPlans++; // Count approved plans for active total
+          break;
         case 'REJECTED': orgStats[orgName].rejectedPlans++; break;
       }
     });
@@ -516,6 +525,15 @@ const AdminDashboard: React.FC = () => {
                     Available Funding
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Government Budget
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    SDG Budget
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Partners Budget
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Funding Gap
                   </th>
                 </tr>
@@ -543,6 +561,15 @@ const AdminDashboard: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
                       ${orgData.availableFunding.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                      ${orgData.governmentBudget.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
+                      ${orgData.sdgBudget.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-orange-600">
+                      ${orgData.partnersBudget.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-red-600">
                       ${orgData.fundingGap.toLocaleString()}
