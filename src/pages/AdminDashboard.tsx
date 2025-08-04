@@ -626,6 +626,9 @@ const AdminDashboard: React.FC = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-orange-600">
                       ${orgData.partnersBudget.toLocaleString()}
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-600">
+                      ${(orgData.otherBudget || 0).toLocaleString()}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-red-600">
                       ${orgData.fundingGap.toLocaleString()}
                     </td>
