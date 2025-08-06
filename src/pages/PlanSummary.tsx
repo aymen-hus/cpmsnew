@@ -438,7 +438,35 @@ const PlanSummary: React.FC = () => {
     
     console.log(`Converted ${objectives.length} objectives to ${exportData.length} export rows`);
     return exportData;
-  };</anoltAction>
+  };
+
+  const formatDate = (dateString: string | undefined | null) => {
+    if (!dateString) return 'N/A';
+    try {
+      return format(new Date(dateString), 'PP');
+    } catch (e) {
+      return 'Invalid date';
+    }
+  };
+
+  const getPeriodString = (activity: any) => {
+    if (!activity) return 'N/A';
+    
+    try {
+      if (activity.selected_quarters?.length > 0) {
+        return activity.selected_quarters.join(', ');
+      } 
+      if (activity.selected_months?.length > 0) {
+        return activity.selected_months.join(', ');
+      }
+    } catch (e) {
+      console.error('Error getting period string:', e);
+    }
+    
+    return 'N/A';
+  };
+
+  const getPlanTypeDisplay = (type: string) => type || 'N/A';</anoltAction>
   const formatDate = (dateString: string | undefined | null) => {
     if (!dateString) return 'N/A';
     try {
