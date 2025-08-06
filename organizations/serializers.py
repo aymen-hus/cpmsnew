@@ -922,6 +922,9 @@ class PlanReviewSerializer(serializers.ModelSerializer):
         return data
 
 class PlanSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
+    
     organization_name = serializers.CharField(source='organization.name', read_only=True)
     strategic_objective_title = serializers.CharField(source='strategic_objective.title', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -935,7 +938,7 @@ class PlanSerializer(serializers.ModelSerializer):
             'id', 'organization', 'organization_name', 'planner_name',
             'type', 'type_display', 'executive_name', 'strategic_objective', 'strategic_objective_title',
             'status', 'submitted_at', 'created_at', 'updated_at', 'selected_objectives',
-            'selected_objectives_weights'
+            'selected_objectives_weights', 'status_display', 'organization_name'
             'submitted_at', 'created_at', 'updated_at', 'reviews', 'objectives'
         ]
         read_only_fields = ['id', 'submitted_at', 'created_at', 'updated_at']

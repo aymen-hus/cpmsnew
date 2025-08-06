@@ -691,8 +691,8 @@ function Planning() {
       if (planId) {
         // If we already have a plan ID, use that
         console.log('Using existing plan ID:', planId);
-        planIdToSubmit = planId;
-      } else {
+        // Add selected objectives IDs to the many-to-many field
+        selected_objectives: planData.objectives.map(obj => obj.id)
         // Otherwise create a new plan
         try {
           const result = await plans.create(planData);

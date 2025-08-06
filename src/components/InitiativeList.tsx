@@ -58,7 +58,22 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
   // Fetch weight summary based on parent type
   const { data: weightSummary, isLoading: isLoadingSummary } = useQuery({
     queryKey: ['initiatives', 'weight-summary', parentId, parentType, planKey],
-    queryFn: () => initiatives.getWeightSummary(parentId, parentType),
+    queryFn: async () => {
+      try {
+        return await initiatives.getWeightSummary(parentId, parentType);
+      } catch (error) {
+        console.warn('Weight summary failed, using calculated values:', error);
+        // Return fallback data based on actual initiatives
+        return {
+          data: {
+            total_initiatives_weight: total_initiatives_weight || 0,
+            remaining_weight: parentWeight - (total_initiatives_weight || 0),
+            parent_weight: parentWeight,
+            is_valid: Math.abs((total_initiatives_weight || 0) - parentWeight) < 0.01
+          }
+        };
+      }
+    },
     enabled: !!parentId, // Only fetch when parentId is available
     staleTime: 0, // Don't cache
     cacheTime: 0 // Don't cache at all
