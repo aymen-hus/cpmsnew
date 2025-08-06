@@ -668,6 +668,18 @@ function Planning() {
         status: 'DRAFT' // Ensure it's created as a draft
       };
       
+      // Prepare selected objectives weights for storage
+      const selectedObjectivesWeights: Record<string, number> = {};
+      planData.objectives.forEach(obj => {
+        if (obj && obj.id) {
+          // Use effective_weight if available, otherwise calculate from initiatives
+          const effectiveWeight = obj.effective_weight !== undefined 
+            ? obj.effective_weight 
+            : obj.initiatives?.reduce((sum, init) => sum + (Number(init.weight) || 0), 0) || 0;
+          selectedObjectivesWeights[obj.id.toString()] = effectiveWeight;
+        }
+      });
+
       console.log("Creating new plan with data:", planData);
       
       // First refresh CSRF token
@@ -703,12 +715,14 @@ function Planning() {
             throw new Error(`Failed to create plan: ${errorDetail}`);
           }
           throw new Error('Failed to create plan: ' + (createError.message || 'Unknown error'));
+        selected_objectives_weights: selectedObjectivesWeights,
         }
       }
       
       // Step 2: Submit the plan
       console.log(`Submitting plan ${planIdToSubmit} for review...`);
       try {
+      console.log('Selected objectives weights:', selectedObjectivesWeights);
         // Refresh CSRF token again for submission
         await auth.getCurrentUser();
         

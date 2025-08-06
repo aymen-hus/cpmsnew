@@ -934,7 +934,8 @@ class PlanSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'organization', 'organization_name', 'planner_name',
             'type', 'type_display', 'executive_name', 'strategic_objective', 'strategic_objective_title',
-            'program', 'fiscal_year', 'from_date', 'to_date', 'status', 'status_display',
+            'status', 'submitted_at', 'created_at', 'updated_at', 'selected_objectives',
+            'selected_objectives_weights'
             'submitted_at', 'created_at', 'updated_at', 'reviews', 'objectives'
         ]
         read_only_fields = ['id', 'submitted_at', 'created_at', 'updated_at']

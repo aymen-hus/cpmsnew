@@ -179,6 +179,16 @@ const PlanSummary: React.FC = () => {
     const processedPlan = JSON.parse(JSON.stringify(plan));
     
     try {
+      // Apply stored objective weights if available
+      if (processedPlan.selected_objectives_weights && processedPlan.objectives) {
+        processedPlan.objectives.forEach((objective: any) => {
+          if (objective && objective.id && processedPlan.selected_objectives_weights[objective.id]) {
+            objective.effective_weight = processedPlan.selected_objectives_weights[objective.id];
+            console.log(`Applied stored weight for objective ${objective.id}: ${objective.effective_weight}%`);
+          }
+        });
+      }
+      
       // Ensure all expected arrays exist and are properly formatted
       if (!Array.isArray(processedPlan.objectives)) {
         processedPlan.objectives = processedPlan.objectives 

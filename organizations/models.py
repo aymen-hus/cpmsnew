@@ -987,6 +987,12 @@ class Plan(models.Model):
         blank=True,
         help_text="All objectives selected for this plan"
     )
+    # Add field to store the planner's custom weights for selected objectives
+    selected_objectives_weights = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Custom weights assigned by planner for each selected objective {objective_id: weight}"
+    )
     program = models.ForeignKey(
         Program,
         on_delete=models.CASCADE,
