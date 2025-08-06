@@ -180,24 +180,6 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
     ? Math.abs(total_initiatives_weight - parentWeight) > 0.01 && total_initiatives_weight < parentWeight
     : total_initiatives_weight < parentWeight;
 
-  // Group initiatives by default vs custom
-  const defaultInitiatives = initiativesList.data.filter(i => i.is_default);
-  // Filter custom initiatives to only show those belonging to the user's organization or default ones
-  const customInitiatives = initiativesList.data.filter(i => 
-    !i.is_default && (i.organization === userOrgId || !i.organization));
-
-  console.log('Default initiatives:', defaultInitiatives.length);
-  console.log('Custom initiatives:', customInitiatives.length);
-  console.log('User organization ID:', userOrgId);
-  console.log('Weight calculation:', {
-    parentWeight,
-    total_initiatives_weight,
-    remaining_weight,
-    is_valid,
-    canAddInitiative,
-    filteredInitiativesCount: filteredInitiatives.length
-  });
-
   // If there are no initiatives yet, show empty state
   if (initiativesList.data.length === 0) {
     return (
@@ -254,6 +236,24 @@ const InitiativeList: React.FC<InitiativeListProps> = ({
       </div>
     );
   }
+
+  // Group initiatives by default vs custom
+  const defaultInitiatives = initiativesList.data.filter(i => i.is_default);
+  // Filter custom initiatives to only show those belonging to the user's organization or default ones
+  const customInitiatives = initiativesList.data.filter(i => 
+    !i.is_default && (i.organization === userOrgId || !i.organization));
+
+  console.log('Default initiatives:', defaultInitiatives.length);
+  console.log('Custom initiatives:', customInitiatives.length);
+  console.log('User organization ID:', userOrgId);
+  console.log('Weight calculation:', {
+    parentWeight,
+    total_initiatives_weight,
+    remaining_weight,
+    is_valid,
+    canAddInitiative,
+    filteredInitiativesCount: filteredInitiatives.length
+  });
 
   return (
     <div className="space-y-4">
