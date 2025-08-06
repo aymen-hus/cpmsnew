@@ -398,10 +398,15 @@ const PlanSummary: React.FC = () => {
                 ? Number(item.q1_target || 0) + Number(item.q2_target || 0) 
                 : Number(item.q2_target || 0);
               
+              // Use stored planner weight if available, otherwise calculate
+              const objectiveDisplayWeight = objective.effective_weight !== undefined 
+                ? objective.effective_weight 
+                : calculatedWeight;
+              
               exportData.push({
                 No: objectiveAdded ? '' : (objIndex + 1).toString(),
                 'Strategic Objective': objectiveAdded ? '' : (objective.title || 'Untitled Objective'),
-                'Strategic Objective Weight': objectiveAdded ? '' : `${calculatedWeight.toFixed(1)}%`,
+                'Strategic Objective Weight': objectiveAdded ? '' : `${objectiveDisplayWeight.toFixed(1)}%`,
                 'Strategic Initiative': initiativeAddedForObjective ? '' : (initiative.name || 'Untitled Initiative'),
                 'Initiative Weight': initiativeAddedForObjective ? '' : `${initiative.weight || 0}%`,
                 'Performance Measure/Main Activity': item.name || 'Untitled Item',

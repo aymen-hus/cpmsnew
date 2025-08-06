@@ -821,7 +821,7 @@ const PlanReviewTable: React.FC<PlanReviewTableProps> = ({
                                   )}
                                 </td>
                                 <td rowSpan={objectiveRowSpan} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-r border-gray-200 bg-gray-50">
-                                  {calculatedWeight.toFixed(1)}%
+                                 {displayWeight.toFixed(1)}%
                                 </td>
                               </>
                             )}
